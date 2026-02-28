@@ -1,0 +1,778 @@
+from decimal import Decimal, InvalidOperation
+
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import User
+from django.contrib import messages
+from django.core.mail import send_mail
+from django.conf import settings
+from django.core.paginator import Paginator
+from django.db import IntegrityError, transaction
+from django.db.models import Q
+from django.shortcuts import render, redirect, get_object_or_404
+from django.views.decorators.http import require_http_methods, require_POST
+
+import random
+
+from .models import Vendor, Category, RFP, Quote, QuoteItem
+
+
+# ---------------- AUTH ----------------
+
+def login_view(request):
+    if request.user.is_authenticated:
+        if request.user.is_staff or request.user.is_superuser:
+            return redirect("admin_dashboard")
+        return redirect("vendor_dashboard")
+
+    error = None
+
+    if request.method == "POST":
+        email = (request.POST.get("email") or "").strip().lower()
+        password = request.POST.get("password") or ""
+
+        user = authenticate(request, username=email, password=password)
+
+        if user:
+            login(request, user)
+
+            if user.is_staff or user.is_superuser:
+                return redirect("admin_dashboard")
+
+            # 🔥 Check vendor exists
+            vendor = Vendor.objects.filter(email=email).first()
+            if not vendor:
+                logout(request)
+                error = "Vendor profile not found. Contact admin."
+                return render(request, "rfp/login.html", {"error": error})
+
+            return redirect("vendor_dashboard")
+
+        else:
+            error = "Invalid credentials"
+
+    return render(request, "rfp/login.html", {"error": error})
+
+
+@login_required
+def logout_view(request):
+    logout(request)
+    return redirect("login")
+
+
+def admin_signup(request):
+    error = None
+
+    if request.method == "POST":
+        first_name = request.POST.get("first_name")
+        last_name = request.POST.get("last_name")
+        email = (request.POST.get("email") or "").strip().lower()
+        password = request.POST.get("password")
+        confirm_password = request.POST.get("confirm_password")
+
+        if password != confirm_password:
+            error = "Passwords do not match."
+        else:
+            try:
+                user = User.objects.create_user(
+                    username=email,
+                    email=email,
+                    password=password,
+                    first_name=first_name,
+                    last_name=last_name
+                )
+                user.is_staff = True
+                user.save()
+                return redirect("login")
+            except IntegrityError:
+                error = "Email already exists."
+
+    return render(request, "rfp/admin_signup.html", {"error": error})
+
+
+def vendor_signup(request):
+    categories = Category.objects.filter(status=Category.Status.ACTIVE)
+    error = None
+
+    if request.method == "POST":
+        f_name = (request.POST.get("f_name") or "").strip()
+        l_name = (request.POST.get("l_name") or "").strip()
+        email = (request.POST.get("email") or "").strip().lower()
+        phone = (request.POST.get("phone") or "").strip()
+        password = request.POST.get("password") or ""
+        confirm_password = request.POST.get("confirm_password") or ""
+
+        # ✅ these names come from your HTML
+        revenue_raw = (request.POST.get("revenue") or "").strip()
+        employees_raw = (request.POST.get("employees") or "").strip()
+        gst_no = (request.POST.get("gst") or "").strip()      # ✅ HTML name="gst"
+        pan_no = (request.POST.get("pan") or "").strip()      # ✅ HTML name="pan"
+        category_id = (request.POST.get("category_id") or "").strip()  # ✅ HTML name="category_id"
+
+        # ---- validations ----
+        if password != confirm_password:
+            messages.error(request, "Passwords do not match.")
+            return render(request, "rfp/vendor_signup.html", {"categories": categories})
+
+        if User.objects.filter(username=email).exists():
+            messages.error(request, "Email already exists.")
+            return render(request, "rfp/vendor_signup.html", {"categories": categories})
+
+        if Vendor.objects.filter(contact=phone).exists():
+            messages.error(request, "Phone already exists.")
+            return render(request, "rfp/vendor_signup.html", {"categories": categories})
+
+        # parse revenue / employees
+        revenue = None
+        try:
+            revenue = Decimal(revenue_raw) if revenue_raw else None
+        except (InvalidOperation, ValueError):
+            revenue = None
+
+        employees = None
+        try:
+            employees = int(employees_raw) if employees_raw else None
+        except ValueError:
+            employees = None
+
+        category = Category.objects.filter(
+            id=category_id,
+            status=Category.Status.ACTIVE
+        ).first()
+
+        if not category:
+            messages.error(request, "Please select a valid category.")
+            return render(request, "rfp/vendor_signup.html", {"categories": categories})
+
+        try:
+            with transaction.atomic():
+                # create auth user
+                user = User.objects.create_user(
+                    username=email,
+                    email=email,
+                    password=password
+                )
+
+                # create vendor profile
+                Vendor.objects.create(
+                    first_name=f_name,
+                    last_name=l_name,
+                    email=email,
+                    contact=phone,
+                    revenue_last_3_years_lakhs=revenue,
+                    employees_count=employees,
+                    gst_no=gst_no,
+                    pan_no=pan_no,
+                    category=category,
+                    status=Vendor.ApprovalStatus.PENDING,  # recommended
+                )
+
+            # auto login vendor
+            from django.contrib.auth import login
+            login(request, user)
+
+            messages.success(request, "Registered successfully! Wait for admin approval.")
+            return redirect("vendor_dashboard")
+
+        except IntegrityError:
+            messages.error(request, "Something went wrong. Email/phone may already exist.")
+            return render(request, "rfp/vendor_signup.html", {"categories": categories})
+
+    return render(request, "rfp/vendor_signup.html", {"categories": categories})
+
+# ---------------- PASSWORD RESET ----------------
+
+def forgot_password(request):
+    message = None
+    error = None
+    otp_sent = request.session.get("otp_sent", False)
+    email = request.session.get("reset_email", "")
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+
+        if action == "send_otp":
+            email = (request.POST.get("email") or "").strip().lower()
+
+            if not User.objects.filter(email=email).exists():
+                error = "Email not registered."
+            else:
+                otp = str(random.randint(100000, 999999))
+                request.session["reset_email"] = email
+                request.session["reset_otp"] = otp
+                request.session["otp_sent"] = True
+
+                send_mail(
+                    subject="Your OTP for Password Reset",
+                    message=f"Your OTP is: {otp}",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
+                message = "OTP sent to your registered email."
+                otp_sent = True
+
+        elif action == "verify_otp":
+            email = (request.POST.get("email") or "").strip().lower()
+            otp_entered = (request.POST.get("otp") or "").strip()
+            otp_saved = request.session.get("reset_otp")
+
+            if otp_saved and otp_entered == otp_saved:
+                request.session["otp_verified"] = True
+                return redirect("reset_password")
+            else:
+                error = "Invalid OTP. Please try again."
+                otp_sent = True
+
+    return render(request, "rfp/forgot_password.html", {
+        "message": message,
+        "error": error,
+        "otp_sent": otp_sent,
+        "email": email
+    })
+
+
+def reset_password(request):
+    if not request.session.get("otp_verified"):
+        return redirect("forgot_password")
+
+    email = request.session.get("reset_email")
+    error = None
+
+    if request.method == "POST":
+        password = request.POST.get("password")
+        confirm_password = request.POST.get("confirm_password")
+
+        if password != confirm_password:
+            error = "Passwords do not match."
+        else:
+            user = User.objects.filter(email=email).first()
+            if not user:
+                error = "User not found."
+            else:
+                user.set_password(password)
+                user.save()
+
+                for k in ["reset_email", "reset_otp", "otp_sent", "otp_verified"]:
+                    request.session.pop(k, None)
+
+                messages.success(request, "Password reset successful. Please login.")
+                return redirect("login")
+
+    return render(request, "rfp/reset_password.html", {"error": error})
+
+
+# ---------------- ADMIN HELPERS ----------------
+
+def _admin_only(request):
+    return request.user.is_authenticated and request.user.is_staff
+
+
+# ---------------- ADMIN PANEL ----------------
+
+@login_required
+def admin_dashboard(request):
+    if not _admin_only(request):
+        return redirect("login")
+    return render(request, "rfp/admin_dashboard.html")
+
+
+@login_required
+def admin_categories(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    q = (request.GET.get("q") or "").strip()
+
+    qs = Category.objects.all().order_by("id")
+    if q:
+        qs = qs.filter(name__icontains=q)
+
+    page_obj = Paginator(qs, 10).get_page(request.GET.get("page"))
+
+    return render(request, "rfp/admin_categories.html", {
+        "page_obj": page_obj,
+        "q": q
+    })
+
+
+@login_required
+def admin_category_create(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    error = None
+
+    if request.method == "POST":
+        name = (request.POST.get("name") or "").strip()
+
+        if not name:
+            error = "Category name is required."
+        elif Category.objects.filter(name__iexact=name).exists():
+            error = "Category already exists."
+        else:
+            Category.objects.create(name=name, status=Category.Status.ACTIVE)
+            messages.success(request, "Category added successfully.")
+            return redirect("admin_categories")
+
+    return render(request, "rfp/admin_category_create.html", {"error": error})
+
+
+@login_required
+def admin_category_toggle(request, pk):
+    if not _admin_only(request):
+        return redirect("login")
+
+    cat = Category.objects.filter(pk=pk).first()
+    if not cat:
+        messages.error(request, "Category not found.")
+        return redirect("admin_categories")
+
+    cat.status = Category.Status.INACTIVE if cat.status == Category.Status.ACTIVE else Category.Status.ACTIVE
+    cat.save(update_fields=["status"])
+
+    messages.success(request, "Status updated.")
+    return redirect("admin_categories")
+
+@login_required
+def admin_vendors(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    qs = Vendor.objects.all().order_by("-id")
+    page_obj = Paginator(qs, 10).get_page(request.GET.get("page"))
+
+    return render(request, "rfp/admin_vendors.html", {"page_obj": page_obj})
+
+
+@login_required
+def admin_vendor_toggle(request, pk):
+    if not _admin_only(request):
+        return redirect("login")
+
+    vendor = Vendor.objects.filter(pk=pk).first()
+    if not vendor:
+        messages.error(request, "Vendor not found.")
+        return redirect("admin_vendors")
+
+    vendor.status = Vendor.ApprovalStatus.REJECTED if vendor.status == Vendor.ApprovalStatus.APPROVED else Vendor.ApprovalStatus.APPROVED
+    vendor.save(update_fields=["status"])
+
+    messages.success(request, "Vendor status updated.")
+    return redirect("admin_vendors")
+
+
+@login_required
+def admin_rfp_list(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    qs = RFP.objects.select_related("category").order_by("-id")
+    page_obj = Paginator(qs, 10).get_page(request.GET.get("page"))
+
+    return render(request, "rfp/admin_rfp_list.html", {"page_obj": page_obj})
+
+
+@login_required
+def admin_rfp_select_category(request):
+    if not request.user.is_staff:
+        return redirect("login")
+
+    categories = Category.objects.filter(status=Category.Status.ACTIVE)
+
+    if request.method == "POST":
+        category_id = request.POST.get("category")
+
+        if not category_id:
+            messages.error(request, "Please select category.")
+            return redirect("admin_rfp_select_category")
+
+        return redirect("admin_rfp_add", category_id=category_id)
+
+    return render(request, "rfp/admin_rfp_select_category.html", {
+        "categories": categories
+    })
+
+
+@login_required
+def admin_rfp_add(request, category_id):
+    if not request.user.is_staff:
+        return redirect("login")
+
+    category = Category.objects.filter(
+        id=category_id,
+        status=Category.Status.ACTIVE
+    ).first()
+
+    if not category:
+        messages.error(request, "Invalid category.")
+        return redirect("admin_rfp_select_category")
+
+    vendors = (
+        Vendor.objects
+        .filter(
+            status=Vendor.ApprovalStatus.APPROVED,
+            category=category
+        )
+        .order_by("-id")
+    )
+
+    if request.method == "POST":
+        title = request.POST.get("title")
+        last_date = request.POST.get("last_date")
+        min_amount = request.POST.get("min_amount")
+        max_amount = request.POST.get("max_amount")
+        vendor_ids = request.POST.getlist("vendors")
+
+        if not title or not last_date or not min_amount or not max_amount:
+            messages.error(request, "All fields are required.")
+            return redirect("admin_rfp_add", category_id=category.id)
+
+        rfp = RFP.objects.create(
+            category=category,
+            title=title,
+            last_date=last_date,
+            min_amount=min_amount,
+            max_amount=max_amount,
+            status=RFP.Status.OPEN
+        )
+
+        rfp.assigned_vendors.set(vendor_ids)
+
+        messages.success(request, "RFP created successfully.")
+        return redirect("admin_rfp_list")
+
+    return render(request, "rfp/admin_rfp_add.html", {
+        "category": category,
+        "vendors": vendors
+    })
+
+
+@login_required
+def admin_rfp_toggle(request, pk):
+    if not _admin_only(request):
+        return redirect("login")
+
+    obj = RFP.objects.filter(pk=pk).first()
+    if not obj:
+        messages.error(request, "RFP not found.")
+        return redirect("admin_rfp_list")
+
+    obj.status = RFP.Status.CLOSED if obj.status == RFP.Status.OPEN else RFP.Status.OPEN
+    obj.save(update_fields=["status"])
+
+    messages.success(request, "RFP status updated.")
+    return redirect("admin_rfp_list")
+
+
+@login_required
+def admin_quotes(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    # We need item-wise rows like the screenshot
+    qs = (
+        QuoteItem.objects
+        .select_related("quote", "quote__rfp", "quote__vendor")
+        .order_by("-id")
+    )
+
+    page_obj = Paginator(qs, 10).get_page(request.GET.get("page"))
+
+    return render(request, "rfp/admin_quotes.html", {
+        "page_obj": page_obj
+    })
+
+
+# ---------------- VENDOR HELPERS ----------------
+
+def _vendor_only(request):
+    if not request.user.is_authenticated:
+        return False
+    if request.user.is_staff or request.user.is_superuser:
+        return False
+
+    vendor = _get_vendor(request)
+    return vendor and vendor.status == Vendor.ApprovalStatus.APPROVED
+
+
+def _get_vendor(request):
+    email = (request.user.email or request.user.username or "").strip().lower()
+    return Vendor.objects.filter(email=email).first()
+
+
+# ---------------- VENDOR PANEL ----------------
+
+@login_required
+def vendor_dashboard(request):
+
+    # If admin → admin dashboard
+    if request.user.is_staff:
+        return redirect("admin_dashboard")
+
+    # Since email stored as username
+    email = request.user.username
+
+    vendor = Vendor.objects.filter(email=email).first()
+
+    if not vendor:
+        return redirect("login")
+
+    return render(request, "rfp/vendor_dashboard.html", {
+        "vendor": vendor
+    })
+
+
+@login_required
+def vendor_rfp_list(request):
+    if not _vendor_only(request):
+        return redirect("admin_dashboard")
+
+    vendor = _get_vendor(request)
+    if not vendor:
+        messages.error(request, "Vendor profile not found.")
+        return redirect("login")
+
+    rfps = (
+        RFP.objects
+        .select_related("category")
+        .filter(
+            status=RFP.Status.OPEN,
+            assigned_vendors=vendor
+        )
+        .order_by("-id")
+    )
+
+    return render(request, "rfp/rfp_list.html", {"rfps": rfps})
+
+
+@login_required
+def vendor_rfp_detail(request, pk):
+    if not _vendor_only(request):
+        return redirect("admin_dashboard")
+
+    vendor = _get_vendor(request)
+    if not vendor:
+        messages.error(request, "Vendor profile not found.")
+        return redirect("login")
+
+    rfp = get_object_or_404(RFP.objects.select_related("category"), pk=pk)
+
+    if rfp.status != RFP.Status.OPEN:
+        messages.error(request, "This RFP is closed.")
+        return redirect("vendor_rfp_list")
+
+    existing_quote = Quote.objects.filter(rfp=rfp, vendor=vendor).first()
+
+    return render(request, "rfp/rfp_detail.html", {
+        "rfp": rfp,
+        "existing_quote": existing_quote
+    })
+
+
+@login_required
+def vendor_quote_list(request):
+    if not _vendor_only(request):
+        return redirect("admin_dashboard")
+
+    vendor = _get_vendor(request)
+    if not vendor:
+        messages.error(request, "Vendor profile not found.")
+        return redirect("login")
+
+    quotes = vendor.quotes.select_related("rfp", "rfp__category").order_by("-id")
+    return render(request, "rfp/quote_list.html", {"quotes": quotes})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def vendor_quote_create(request, rfp_id):
+    if not _vendor_only(request):
+        return redirect("admin_dashboard")
+
+    vendor = _get_vendor(request)
+    if not vendor:
+        messages.error(request, "Vendor profile not found.")
+        return redirect("login")
+
+    rfp = get_object_or_404(RFP.objects.select_related("category"), pk=rfp_id)
+
+    existing = Quote.objects.filter(rfp=rfp, vendor=vendor).first()
+    if existing:
+        return redirect("vendor_quote_submit", rfp_id=rfp.id)
+
+    if request.method == "POST":
+        Quote.objects.create(rfp=rfp, vendor=vendor)
+        messages.success(request, "Quote created. Add items now.")
+        return redirect("vendor_quote_submit", rfp_id=rfp.id)
+
+    return render(request, "rfp/quote_create.html", {"rfp": rfp})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def vendor_quote_submit(request, rfp_id):
+    if not _vendor_only(request):
+        return redirect("admin_dashboard")
+
+    vendor = _get_vendor(request)
+    if not vendor:
+        messages.error(request, "Vendor profile not found.")
+        return redirect("login")
+
+    rfp = get_object_or_404(RFP.objects.select_related("category"), pk=rfp_id)
+
+    quote = Quote.objects.filter(rfp=rfp, vendor=vendor).first()
+    if not quote:
+        return redirect("vendor_quote_create", rfp_id=rfp.id)
+
+    if request.method == "POST":
+        item_names = request.POST.getlist("item_name")
+        prices = request.POST.getlist("vendor_price")
+        quantities = request.POST.getlist("quantity")
+
+        # ✅ Validate: at least one row present
+        if not item_names:
+            messages.error(request, "Please add at least one item.")
+            return redirect("vendor_quote_submit", rfp_id=rfp.id)
+
+        with transaction.atomic():
+            # Remove old items (re-submit case)
+            quote.items.all().delete()
+
+            for i in range(len(item_names)):
+                name = (item_names[i] or "").strip()
+                if not name:
+                    continue
+
+                # Convert vendor_price -> Decimal safely
+                raw_price = (prices[i] if i < len(prices) else "") or "0"
+                try:
+                    price = Decimal(str(raw_price).strip() or "0")
+                except (InvalidOperation, TypeError, ValueError):
+                    price = Decimal("0")
+
+                # Convert quantity -> int safely
+                raw_qty = (quantities[i] if i < len(quantities) else "") or "1"
+                try:
+                    qty = int(str(raw_qty).strip() or "1")
+                except (TypeError, ValueError):
+                    qty = 1
+
+                QuoteItem.objects.create(
+                    quote=quote,
+                    item_name=name,
+                    vendor_price=price,  # Decimal
+                    quantity=qty         # int
+                )
+
+        messages.success(request, "Quote submitted successfully.")
+        return redirect("vendor_quote_list")
+
+    return render(request, "rfp/quote_submit.html", {
+        "rfp": rfp,
+        "quote": quote,
+        "items": quote.items.all()
+    })
+
+# quote
+@login_required
+def vendor_rfp_for_quotes(request):
+    if not _vendor_only(request):
+        return redirect("admin_dashboard")
+
+    vendor = _get_vendor(request)
+    if not vendor:
+        messages.error(request, "Vendor profile not found.")
+        return redirect("login")
+
+    qs = (
+        RFP.objects
+        .select_related("category")
+        .filter(
+            status=RFP.Status.OPEN,
+            assigned_vendors=vendor
+        )
+        .order_by("-id")
+    )
+
+    paginator = Paginator(qs, 10)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    rfp_ids = [r.id for r in page_obj.object_list]
+    quoted_ids = set(
+        Quote.objects.filter(vendor=vendor, rfp_id__in=rfp_ids)
+        .values_list("rfp_id", flat=True)
+    )
+
+    return render(request, "rfp/rfp_for_quotes.html", {
+        "page_obj": page_obj,
+        "quoted_ids": quoted_ids,
+    })
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def vendor_apply_rfp(request, rfp_id):
+    if not _vendor_only(request):
+        return redirect("admin_dashboard")
+
+    vendor = _get_vendor(request)
+    if not vendor:
+        messages.error(request, "Vendor profile not found.")
+        return redirect("login")
+
+    rfp = get_object_or_404(RFP.objects.select_related("category"), id=rfp_id)
+
+    if rfp.status != RFP.Status.OPEN:
+        messages.error(request, "This RFP is closed.")
+        return redirect("vendor_rfp_for_quotes")
+
+    quote, created = Quote.objects.get_or_create(rfp=rfp, vendor=vendor)
+
+    if request.method == "GET":
+        return render(request, "rfp/quote_submit.html", {
+            "rfp": rfp,
+            "quote": quote,
+            "items": quote.items.all()
+        })
+
+    item_names = request.POST.getlist("item_name")
+    prices = request.POST.getlist("vendor_price")
+    quantities = request.POST.getlist("quantity")
+
+    # ✅ Validate: at least one row present
+    if not item_names:
+        messages.error(request, "Please add at least one item.")
+        return redirect("vendor_apply_rfp", rfp_id=rfp.id)
+
+    with transaction.atomic():
+        # Remove old items (re-submit case)
+        quote.items.all().delete()
+
+        for i in range(len(item_names)):
+            name = (item_names[i] or "").strip()
+            if not name:
+                continue
+
+            # ✅ price -> Decimal safely
+            raw_price = (prices[i] if i < len(prices) else "") or "0"
+            try:
+                price = Decimal(str(raw_price).strip() or "0")
+            except (InvalidOperation, TypeError, ValueError):
+                price = Decimal("0")
+
+            raw_qty = (quantities[i] if i < len(quantities) else "") or "1"
+            try:
+                qty = int(str(raw_qty).strip() or "1")
+            except (TypeError, ValueError):
+                qty = 1
+
+            QuoteItem.objects.create(
+                quote=quote,
+                item_name=name,
+                vendor_price=price,
+                quantity=qty
+            )
+
+    messages.success(request, "Quote submitted successfully.")
+    return redirect("vendor_quote_list")

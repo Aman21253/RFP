@@ -1,0 +1,128 @@
+/* Full background */
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: linear-gradient(to right, #e6f2fb, #f0f7fc);
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Main container */
+.login-container {
+    text-align: center;
+}
+
+/* Card */
+.login-card {
+    width: 420px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0px 10px 25px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+}
+
+/* Header */
+.card-header {
+    background: #cfe4f7;
+    padding: 30px 25px;
+    text-align: left;
+}
+
+.card-header h2 {
+    margin: 0;
+    font-size: 20px;
+    color: #2a7db8;
+}
+
+.card-header p {
+    margin-top: 8px;
+    font-size: 14px;
+    color: #4d8cc7;
+}
+
+/* Body */
+.card-body {
+    padding: 30px 25px;
+    text-align: left;
+}
+
+label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    margin-top: 20px;
+}
+
+input {
+    width: 100%;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid #ddd;
+    font-size: 14px;
+}
+
+input:focus {
+    outline: none;
+    border-color: #2a7db8;
+}
+
+/* Button */
+.login-btn {
+    width: 100%;
+    margin-top: 25px;
+    padding: 12px;
+    border-radius: 6px;
+    border: none;
+    background: linear-gradient(to right, #2a7db8, #1e88e5);
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.login-btn:hover {
+    opacity: 0.9;
+}
+
+/* Links */
+.extra-links {
+    margin-top: 25px;
+    text-align: center;
+}
+
+.extra-links a {
+    display: block;
+    color: #6c7a89;
+    font-size: 14px;
+    text-decoration: none;
+    margin-top: 12px;
+}
+
+.extra-links a:hover {
+    color: #1e88e5;
+}
+
+/* Footer */
+.footer {
+    margin-top: 20px;
+    font-size: 13px;
+    color: #6c7a89;
+}
+
+/* Error */
+.error {
+    background: #ffe5e5;
+    padding: 10px;
+    border-radius: 5px;
+    color: red;
+    margin-bottom: 15px;
+}
+
+.success {
+    background: #e6ffed;
+    padding: 10px;
+    border-radius: 5px;
+    color: #1b8a3e;
+    margin-bottom: 15px;
+}

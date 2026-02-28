@@ -1,0 +1,91 @@
+{% extends "rfp/base_admin.html" %}
+{% load static %}
+
+{% block content %}
+<div class="page-header">
+  <h2>Categories</h2>
+  <div class="breadcrumb">Home <span>/</span> Categories</div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>Categories</h3>
+
+    <!-- ✅ SEARCH (GET) -->
+    <form method="get" action="" class="add-form">
+      <input type="text"
+             name="q"
+             value="{{ q|default:'' }}"
+             placeholder="Category name"
+             class="add-input">
+      <button class="btn-add" type="submit">Search</button>
+
+      <!-- ✅ NEW PAGE LINK -->
+      <a href="{% url 'admin_category_create' %}" class="btn-add" style="text-decoration:none; display:inline-flex; align-items:center;">
+        + Add Category
+      </a>
+    </form>
+  </div>
+
+  {% if messages %}
+    <div class="msg-wrap">
+      {% for message in messages %}
+        <div class="msg {{ message.tags }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th style="width:90px;">S. No.</th>
+        <th>Categories name</th>
+        <th style="width:180px;">Status</th>
+        <th style="width:200px;">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in page_obj %}
+      <tr>
+        <td>{{ forloop.counter0|add:page_obj.start_index }}</td>
+        <td>{{ c.name }}</td>
+        <td>
+          {% if c.status == "active" %}
+            <span class="badge badge-green">ACTIVE</span>
+          {% else %}
+            <span class="badge badge-red">INACTIVE</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if c.status == "active" %}
+            <a class="action action-red" href="{% url 'admin_category_toggle' c.id %}">Deactivate</a>
+          {% else %}
+            <a class="action action-green" href="{% url 'admin_category_toggle' c.id %}">Activate</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="4" style="text-align:center; padding:25px;">No categories found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- ✅ PAGINATION keeps search query -->
+  <div class="pagination">
+    {% if page_obj.has_previous %}
+      <a href="?page={{ page_obj.previous_page_number }}{% if q %}&q={{ q }}{% endif %}" class="pg">‹</a>
+    {% endif %}
+
+    {% for n in page_obj.paginator.page_range %}
+      <a href="?page={{ n }}{% if q %}&q={{ q }}{% endif %}"
+         class="pg {% if page_obj.number == n %}active{% endif %}">
+        {{ n }}
+      </a>
+    {% endfor %}
+
+    {% if page_obj.has_next %}
+      <a href="?page={{ page_obj.next_page_number }}{% if q %}&q={{ q }}{% endif %}" class="pg">›</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

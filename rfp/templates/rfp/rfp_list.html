@@ -1,0 +1,31 @@
+{% extends "rfp/base_vendor.html" %}
+{% block content %}
+<h2>Assigned RFPs</h2>
+
+<table class="tbl">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Category</th>
+      <th>Title</th>
+      <th>Last Date</th>
+      <th>Status</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rfps %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ r.category.name }}</td>
+      <td>{{ r.title }}</td>
+      <td>{{ r.last_date }}</td>
+      <td>{{ r.status }}</td>
+      <td><a href="{% url 'vendor_rfp_detail' r.id %}">View</a></td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="6" style="text-align:center;">No assigned RFPs</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

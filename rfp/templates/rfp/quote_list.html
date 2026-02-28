@@ -1,0 +1,27 @@
+{% extends "rfp/base_vendor.html" %}
+{% block content %}
+<h2>My Quotes</h2>
+
+<table class="tbl">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>RFP</th>
+      <th>Category</th>
+      <th>Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for q in quotes %}
+    <tr>
+      <td>{{ q.id }}</td>
+      <td>{{ q.rfp.title }}</td>
+      <td>{{ q.rfp.category.name }}</td>
+      <td>{{ q.total_cost }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="4" style="text-align:center;">No quotes yet</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

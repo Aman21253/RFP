@@ -1,0 +1,59 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Vendor Panel{% endblock %}</title>
+
+  <!-- Use same CSS as admin (recommended) -->
+  <link rel="stylesheet" href="{% static 'css/admin.css' %}">
+</head>
+<body>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <h2>Velocity</h2>
+    </div>
+
+    <nav class="menu">
+      <a href="{% url 'vendor_dashboard' %}" class="{% if request.path == '/vendor/dashboard/' %}active{% endif %}">
+        Dashboard
+      </a>
+      <a href="{% url 'vendor_rfp_for_quotes' %}">RFP for Quotes</a>
+    </nav>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="top-left">
+        {% block breadcrumb %}{% endblock %}
+      </div>
+
+      <div class="top-right">
+        <span>Welcome {{ request.user.username }}</span>
+        <a href="{% url 'logout' %}" class="logout">Logout</a>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <section class="content">
+      {% if messages %}
+        <div class="msg-wrap">
+          {% for message in messages %}
+            <div class="msg {{ message.tags }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </section>
+  </div>
+</div>
+
+</body>
+</html>

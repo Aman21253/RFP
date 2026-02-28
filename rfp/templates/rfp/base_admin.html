@@ -1,0 +1,31 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Panel - RFP</title>
+    <link rel="stylesheet" href="{% static 'css/admin.css' %}">
+</head>
+<body>
+
+<div class="sidebar">
+    <h3>Velocity</h3>
+    <a href="{% url 'admin_dashboard' %}">Dashboard</a>
+    <a href="{% url 'admin_vendors' %}">Vendors</a>
+    <a href="{% url 'admin_rfp_list' %}">RFP Lists</a>
+    <a href="{% url 'admin_quotes' %}">RFP Quotes</a>
+    <a href="{% url 'admin_categories' %}">Categories</a>
+</div>
+
+<div class="main">
+    <div class="topbar">
+        Welcome {{ request.user.first_name }}
+        <a href="{% url 'logout' %}">Logout</a>
+    </div>
+
+    <div class="content">
+        {% block content %}{% endblock %}
+    </div>
+</div>
+
+</body>
+</html>

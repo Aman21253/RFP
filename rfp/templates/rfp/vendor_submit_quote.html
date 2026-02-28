@@ -1,0 +1,44 @@
+{% extends "rfp/base_vendor.html" %}
+{% block content %}
+
+<h2>Submit Quote - {{ rfp.title }}</h2>
+
+<form method="post">
+    {% csrf_token %}
+
+    <div id="items-container">
+
+        <div class="item-row">
+            <input type="text" name="item_name" placeholder="Item Name" required>
+            <input type="number" name="vendor_price" placeholder="Price" step="0.01" required>
+            <input type="number" name="quantity" placeholder="Quantity" min="1" required>
+        </div>
+
+    </div>
+
+    <button type="button" onclick="addRow()">+ Add More</button>
+
+    <br><br>
+
+    <button type="submit">Submit Quote</button>
+
+</form>
+
+<script>
+function addRow() {
+    let container = document.getElementById("items-container");
+
+    let row = document.createElement("div");
+    row.classList.add("item-row");
+
+    row.innerHTML = `
+        <input type="text" name="item_name" placeholder="Item Name" required>
+        <input type="number" name="vendor_price" placeholder="Price" step="0.01" required>
+        <input type="number" name="quantity" placeholder="Quantity" min="1" required>
+    `;
+
+    container.appendChild(row);
+}
+</script>
+
+{% endblock %}

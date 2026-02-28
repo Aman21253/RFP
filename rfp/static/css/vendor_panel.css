@@ -1,0 +1,20 @@
+body { margin:0; font-family: Arial; background:#f3f6f9; }
+.sidebar{
+  width:220px; height:100vh; position:fixed; left:0; top:0;
+  background:#23323a; color:#fff; padding:20px;
+}
+.sidebar h3{ margin:0 0 20px; font-weight:700; }
+.sidebar a{ display:block; color:#cfd8dc; text-decoration:none; padding:10px 0; }
+.sidebar a:hover{ color:#fff; }
+
+.main{ margin-left:220px; }
+.topbar{ background:#fff; padding:15px 20px; border-bottom:1px solid #e5e7eb; }
+.content{ padding:20px; }
+
+.tbl{ width:100%; border-collapse:collapse; background:#fff; }
+.tbl th{ background:#2b3b45; color:#fff; padding:12px; text-align:left; }
+.tbl td{ padding:12px; border-top:1px solid #eef1f4; }
+.msg-wrap{ margin-bottom:15px; }
+.msg{ padding:10px; border-radius:6px; margin-bottom:8px; }
+.msg.error{ background:#ffe5e5; color:#b00020; }
+.msg.success{ background:#e7f7ee; color:#0b6b3a; }

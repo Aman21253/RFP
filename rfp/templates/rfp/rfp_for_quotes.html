@@ -1,0 +1,87 @@
+{% extends "rfp/base_vendor.html" %}
+
+{% block title %}RFP List{% endblock %}
+
+{% block content %}
+
+<div class="content-header">
+  <h2>RFP List</h2>
+  <div class="breadcrumb">Home / RFP List</div>
+</div>
+
+<div class="card-box">
+  <h3 style="margin-bottom:12px;">RFP</h3>
+
+  <div style="overflow:auto;">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>RFP No.</th>
+          <th>RFP Title</th>
+          <th>RFP Last Date</th>
+          <th>Min Amount</th>
+          <th>Max Amount</th>
+          <th>Status</th>
+          <th style="text-align:right;">Action</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for rfp in page_obj %}
+          <tr>
+            <td>{{ rfp.id }}</td>
+            <td>{{ rfp.title }}</td>
+            <td>{{ rfp.last_date }}</td>
+            <td>{{ rfp.min_amount }}</td>
+            <td>{{ rfp.max_amount }}</td>
+
+            <td>
+              {% if rfp.status == "open" or rfp.status == rfp.Status.OPEN %}
+                <span class="badge badge-success">OPEN</span>
+              {% else %}
+                <span class="badge badge-danger">CLOSED</span>
+              {% endif %}
+            </td>
+
+            <td style="text-align:right;">
+              {% if rfp.id in quoted_ids %}
+                <span style="color:green; font-weight:600;">Applied</span>
+              {% else %}
+                <a href="{% url 'vendor_apply_rfp' rfp.id %}" class="apply-btn">Apply</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7" style="text-align:center; padding:16px;">
+              No assigned open RFPs found.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  {% if page_obj.paginator.num_pages > 1 %}
+    <div class="pagination">
+      {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}">«</a>
+      {% endif %}
+
+      {% for n in page_obj.paginator.page_range %}
+        {% if n == page_obj.number %}
+          <span class="active">{{ n }}</span>
+        {% else %}
+          <a href="?page={{ n }}">{{ n }}</a>
+        {% endif %}
+      {% endfor %}
+
+      {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}">»</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}

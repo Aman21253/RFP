@@ -1,0 +1,79 @@
+{% extends "rfp/base_admin.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h2>Vendors</h2>
+  <div class="breadcrumb">Home <span>/</span> Vendors</div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>Vendors</h3>
+  </div>
+
+  {% if messages %}
+    <div class="msg-wrap">
+      {% for message in messages %}
+        <div class="msg {{ message.tags }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th style="width:90px;">S. No.</th>
+        <th>Vendor Name</th>
+        <th>Email</th>
+        <th style="width:160px;">Phone</th>
+        <th style="width:160px;">Status</th>
+        <th style="width:200px;">Action</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      {% for v in page_obj %}
+      <tr>
+        <td>{{ forloop.counter0|add:page_obj.start_index }}</td>
+        <td>{{ v.first_name }} {{ v.last_name }}</td>
+        <td>{{ v.email }}</td>
+        <td>{{ v.contact }}</td>
+        <td>
+          {% if v.status == "approved" %}
+            <span class="badge badge-green">APPROVED</span>
+          {% else %}
+            <span class="badge badge-red">REJECTED</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if v.status == "approved" %}
+            <a class="action action-red" href="{% url 'admin_vendor_toggle' v.id %}">Reject</a>
+          {% else %}
+            <a class="action action-green" href="{% url 'admin_vendor_toggle' v.id %}">Approve</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="6" style="text-align:center; padding:25px;">No vendors found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="pagination">
+    {% if page_obj.has_previous %}
+      <a href="?page={{ page_obj.previous_page_number }}" class="pg">‹</a>
+    {% endif %}
+
+    {% for n in page_obj.paginator.page_range %}
+      <a href="?page={{ n }}" class="pg {% if page_obj.number == n %}active{% endif %}">{{ n }}</a>
+    {% endfor %}
+
+    {% if page_obj.has_next %}
+      <a href="?page={{ page_obj.next_page_number }}" class="pg">›</a>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,62 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login - RFP System</title>
+    <link rel="stylesheet" href="{% static 'css/login.css' %}">
+</head>
+<body>
+
+<div class="login-container">
+    <div class="login-card">
+
+        <div class="card-header">
+            <h2>Welcome to RFP System!</h2>
+            <p>Sign in to continue</p>
+        </div>
+
+        <div class="card-body">
+            {% if error %}
+                <div class="error">{{ error }}</div>
+            {% endif %}
+
+            <form method="post">
+                {% csrf_token %}
+
+                <label>First Name</label>
+                <input type="text" name="f_name" placeholder="Enter First Name" required>
+
+                <label>Last Name</label>
+                <input type="text" name="l_name" placeholder="Enter Last Name" required>
+
+                <label>Email</label>
+                <input type="text" name="email" placeholder="Enter Email" required>
+
+                <label>Password</label>
+                <input type="password" name="password" placeholder="Enter password" required>
+
+                <label>Confirm Password</label>
+                <input type="password" name="confirm password" placeholder="Enter password" required>
+
+                <button type="submit" class="login-btn">Sign Up</button>
+            </form>
+
+            <div class="extra-links">
+                <a href="{% url 'vendor_signup' %}">
+                    🔒 Register as Vendor
+                </a>
+                <a href="{% url 'forgot_password' %}">
+                    🔒 Forgot your password?
+                </a>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="footer">
+        © Copyright ❤️ RFP System
+    </div>
+</div>
+
+</body>
+</html>

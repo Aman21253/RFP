@@ -1,0 +1,15 @@
+{% extends "rfp/base_vendor.html" %}
+{% block content %}
+<h2>RFP Detail</h2>
+
+<p><b>Category:</b> {{ rfp.category.name }}</p>
+<p><b>Title:</b> {{ rfp.title }}</p>
+<p><b>Last Date:</b> {{ rfp.last_date }}</p>
+<p><b>Budget:</b> {{ rfp.min_amount }} - {{ rfp.max_amount }}</p>
+
+{% if existing_quote %}
+  <p><b>Your Quote:</b> ₹{{ existing_quote.total_cost }}</p>
+{% else %}
+  <p>No quote submitted yet.</p>
+{% endif %}
+{% endblock %}
