@@ -4,6 +4,8 @@ from . import views
 urlpatterns = [
     # ---------- AUTH ----------
     path("", views.login_view, name="login"),
+    path("vendor/verify-otp/", views.vendor_verify_otp, name="vendor_verify_otp"),
+    path("vendor/resend-otp/", views.vendor_resend_otp, name="vendor_resend_otp"),
     path("logout/", views.logout_view, name="logout"),
     path("forgot-password/", views.forgot_password, name="forgot_password"),
     path("reset-password/", views.reset_password, name="reset_password"),
@@ -40,4 +42,8 @@ urlpatterns = [
 
     path("vendor/rfp-for-quotes/", views.vendor_rfp_for_quotes, name="vendor_rfp_for_quotes"),
     path("vendor/rfp/<int:rfp_id>/apply/", views.vendor_apply_rfp, name="vendor_apply_rfp"),
+
+    path("panel/categories/export/", views.export_categories_excel, name="export_categories_excel"),
+    path("panel/vendors/export/", views.export_vendors_excel, name="export_vendors_excel"),
+    path("panel/rfp/export/", views.export_rfp_excel, name="export_rfp_excel"),
 ]

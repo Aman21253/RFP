@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Category, Vendor, RFP, Quote, QuoteItem
+from .models import Category, Vendor, RFP, Quote, QuoteItem, AuthConfig, LoginOTP
 
 
 @admin.register(Category)
@@ -11,6 +11,14 @@ class CategoryAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+@admin.register(AuthConfig)
+class AuthConfigAdmin(admin.ModelAdmin):
+    list_display = ("enable_vendor_2fa", "otp_expiry_minutes", "otp_channel", "updated_at")
+
+@admin.register(LoginOTP)
+class LoginOTPAdmin(admin.ModelAdmin):
+    list_display = ("email", "otp", "created_at", "expires_at", "is_used")
+    search_fields = ("email",)
 
 @admin.register(Vendor)
 class VendorAdmin(admin.ModelAdmin):

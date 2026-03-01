@@ -20,6 +20,10 @@
              class="add-input">
       <button class="btn-add" type="submit">Search</button>
 
+      <a href="{% url 'export_categories_excel' %}" class="btn-add">
+        Download Excel
+      </a>
+
       <!-- ✅ NEW PAGE LINK -->
       <a href="{% url 'admin_category_create' %}" class="btn-add" style="text-decoration:none; display:inline-flex; align-items:center;">
         + Add Category

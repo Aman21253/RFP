@@ -1,5 +1,6 @@
 from decimal import Decimal, InvalidOperation
-
+from openpyxl import Workbook
+from django.http import HttpResponse
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -11,10 +12,10 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
-
 import random
-
-from .models import Vendor, Category, RFP, Quote, QuoteItem
+from django.utils import timezone
+from datetime import timedelta
+from .models import Vendor, Category, RFP, Quote, QuoteItem, AuthConfig, LoginOTP
 
 
 # ---------------- AUTH ----------------
@@ -32,27 +33,120 @@ def login_view(request):
         password = request.POST.get("password") or ""
 
         user = authenticate(request, username=email, password=password)
+        if not user:
+            return render(request, "rfp/login.html", {"error": "Invalid credentials"})
 
-        if user:
+        # Admin login directly
+        if user.is_staff or user.is_superuser:
             login(request, user)
+            return redirect("admin_dashboard")
 
-            if user.is_staff or user.is_superuser:
-                return redirect("admin_dashboard")
+        # Vendor must exist
+        vendor = Vendor.objects.filter(email=email).first()
+        if not vendor:
+            return render(request, "rfp/login.html", {"error": "Vendor profile not found. Contact admin."})
 
-            # 🔥 Check vendor exists
-            vendor = Vendor.objects.filter(email=email).first()
-            if not vendor:
-                logout(request)
-                error = "Vendor profile not found. Contact admin."
-                return render(request, "rfp/login.html", {"error": error})
+        # Vendor must be APPROVED
+        if vendor.status != Vendor.ApprovalStatus.APPROVED:
+            return render(request, "rfp/login.html", {"error": "Your account is not approved yet."})
 
+        # Check backend config
+        cfg = AuthConfig.get_solo()
+        if not cfg.enable_vendor_2fa:
+            login(request, user)
             return redirect("vendor_dashboard")
 
-        else:
-            error = "Invalid credentials"
+        # Create OTP + store pending login in session
+        otp = LoginOTP.generate_otp()
+        expires_at = timezone.now() + timedelta(minutes=cfg.otp_expiry_minutes)
+
+        LoginOTP.objects.create(
+            email=email,
+            otp=otp,
+            expires_at=expires_at
+        )
+
+        # send OTP (email)
+        send_mail(
+            subject="Your Login OTP",
+            message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=False
+        )
+
+        request.session["pending_2fa_email"] = email
+        request.session["pending_2fa_user_id"] = user.id
+        return redirect("vendor_verify_otp")
 
     return render(request, "rfp/login.html", {"error": error})
 
+@require_http_methods(["GET", "POST"])
+def vendor_verify_otp(request):
+    email = request.session.get("pending_2fa_email")
+    user_id = request.session.get("pending_2fa_user_id")
+
+    if not email or not user_id:
+        return redirect("login")
+
+    if request.method == "POST":
+        otp_entered = (request.POST.get("otp") or "").strip()
+
+        otp_obj = (
+            LoginOTP.objects
+            .filter(email=email, otp=otp_entered, is_used=False)
+            .order_by("-created_at")
+            .first()
+        )
+
+        if not otp_obj:
+            return render(request, "rfp/vendor_verify_otp.html", {"error": "Invalid OTP."})
+
+        if timezone.now() > otp_obj.expires_at:
+            return render(request, "rfp/vendor_verify_otp.html", {"error": "OTP expired. Please resend OTP."})
+
+        # mark used
+        otp_obj.is_used = True
+        otp_obj.save(update_fields=["is_used"])
+
+        # login user
+        user = User.objects.filter(id=user_id).first()
+        if not user:
+            return redirect("login")
+
+        login(request, user)
+
+        # clear session
+        request.session.pop("pending_2fa_email", None)
+        request.session.pop("pending_2fa_user_id", None)
+
+        return redirect("vendor_dashboard")
+
+    return render(request, "rfp/vendor_verify_otp.html")
+
+
+@require_POST
+def vendor_resend_otp(request):
+    email = request.session.get("pending_2fa_email")
+    user_id = request.session.get("pending_2fa_user_id")
+    if not email or not user_id:
+        return redirect("login")
+
+    cfg = AuthConfig.get_solo()
+    otp = LoginOTP.generate_otp()
+    expires_at = timezone.now() + timedelta(minutes=cfg.otp_expiry_minutes)
+
+    LoginOTP.objects.create(email=email, otp=otp, expires_at=expires_at)
+
+    send_mail(
+        subject="Your Login OTP (Resent)",
+        message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[email],
+        fail_silently=False
+    )
+
+    return redirect("vendor_verify_otp")
 
 @login_required
 def logout_view(request):
@@ -509,7 +603,6 @@ def vendor_dashboard(request):
     # If admin → admin dashboard
     if request.user.is_staff:
         return redirect("admin_dashboard")
-
     # Since email stored as username
     email = request.user.username
 
@@ -776,3 +869,119 @@ def vendor_apply_rfp(request, rfp_id):
 
     messages.success(request, "Quote submitted successfully.")
     return redirect("vendor_quote_list")
+
+@login_required
+def export_categories_excel(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Categories"
+
+    # Header
+    ws.append(["ID", "Category Name", "Status", "Created At"])
+
+    categories = Category.objects.all().order_by("id")
+
+    for c in categories:
+        ws.append([
+            c.id,
+            c.name,
+            c.status,
+            c.created_at.strftime("%Y-%m-%d %H:%M")
+        ])
+
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = "attachment; filename=categories.xlsx"
+
+    wb.save(response)
+    return response
+
+@login_required
+def export_vendors_excel(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Vendors"
+
+    ws.append([
+        "ID",
+        "Name",
+        "Email",
+        "Phone",
+        "Category",
+        "Revenue (Lakhs)",
+        "Employees",
+        "GST",
+        "PAN",
+        "Status"
+    ])
+
+    vendors = Vendor.objects.select_related("category").all().order_by("id")
+
+    for v in vendors:
+        ws.append([
+            v.id,
+            f"{v.first_name} {v.last_name}",
+            v.email,
+            v.contact,
+            v.category.name if v.category else "",
+            v.revenue_last_3_years_lakhs,
+            v.employees_count,
+            v.gst_no,
+            v.pan_no,
+            v.status
+        ])
+
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = "attachment; filename=vendors.xlsx"
+
+    wb.save(response)
+    return response
+
+@login_required
+def export_rfp_excel(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "RFP List"
+
+    ws.append([
+        "ID",
+        "Title",
+        "Category",
+        "Last Date",
+        "Min Amount",
+        "Max Amount",
+        "Status"
+    ])
+
+    rfps = RFP.objects.select_related("category").all().order_by("id")
+
+    for r in rfps:
+        ws.append([
+            r.id,
+            r.title,
+            r.category.name,
+            r.last_date.strftime("%Y-%m-%d"),
+            r.min_amount,
+            r.max_amount,
+            r.status
+        ])
+
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = "attachment; filename=rfp_list.xlsx"
+
+    wb.save(response)
+    return response

@@ -10,6 +10,9 @@
   <div class="card-head">
     <h3>Vendors</h3>
   </div>
+  <a href="{% url 'export_vendors_excel' %}" class="btn-add">
+    Download Excel
+  </a>
 
   {% if messages %}
     <div class="msg-wrap">

@@ -1,7 +1,50 @@
 from django.db import models
 from django.core.validators import MinValueValidator
 from django.utils import timezone
+import random
 
+class AuthConfig(models.Model):
+    """
+    Single-row config for authentication behavior.
+    Edit from Django admin.
+    """
+    enable_vendor_2fa = models.BooleanField(default=True)
+    otp_expiry_minutes = models.PositiveIntegerField(default=5, validators=[MinValueValidator(1)])
+    otp_channel = models.CharField(
+        max_length=10,
+        choices=[("email", "Email")],
+        default="email"
+    )
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return "Auth Config"
+
+    @staticmethod
+    def get_solo():
+        obj = AuthConfig.objects.first()
+        if not obj:
+            obj = AuthConfig.objects.create()
+        return obj
+
+
+class LoginOTP(models.Model):
+    """
+    Stores OTP for vendor login.
+    """
+    email = models.EmailField()
+    otp = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"{self.email} OTP"
+
+    @staticmethod
+    def generate_otp():
+        return str(random.randint(100000, 999999))
 
 class TimeStampedModel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)

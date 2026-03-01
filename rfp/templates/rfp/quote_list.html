@@ -1,5 +1,6 @@
 {% extends "rfp/base_vendor.html" %}
 {% block content %}
+
 <h2>My Quotes</h2>
 
 <table class="tbl">
@@ -9,6 +10,7 @@
       <th>RFP</th>
       <th>Category</th>
       <th>Total</th>
+      <th>Action</th>
     </tr>
   </thead>
   <tbody>
@@ -18,10 +20,110 @@
       <td>{{ q.rfp.title }}</td>
       <td>{{ q.rfp.category.name }}</td>
       <td>{{ q.total_cost }}</td>
+      <td>
+        <button onclick="openModal({{ q.id }})" class="btn-view">
+          View
+        </button>
+      </td>
     </tr>
+
+    <!-- Hidden Quote Data -->
+    <div id="quote-data-{{ q.id }}" style="display:none;">
+      <h3>{{ q.rfp.title }}</h3>
+      <p><strong>Category:</strong> {{ q.rfp.category.name }}</p>
+
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Price</th>
+            <th>Qty</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in q.items.all %}
+          <tr>
+            <td>{{ item.item_name }}</td>
+            <td>{{ item.vendor_price }}</td>
+            <td>{{ item.quantity }}</td>
+            <td>{{ item.line_total }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h4 style="text-align:right;">Grand Total: {{ q.total_cost }}</h4>
+    </div>
+
     {% empty %}
-    <tr><td colspan="4" style="text-align:center;">No quotes yet</td></tr>
+    <tr><td colspan="5" style="text-align:center;">No quotes yet</td></tr>
     {% endfor %}
   </tbody>
 </table>
+
+<!-- Modal -->
+<div id="quoteModal" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="closeModal()">&times;</span>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<!-- JS -->
+<script>
+function openModal(id) {
+  const data = document.getElementById("quote-data-" + id).innerHTML;
+  document.getElementById("modalBody").innerHTML = data;
+  document.getElementById("quoteModal").style.display = "block";
+}
+
+function closeModal() {
+  document.getElementById("quoteModal").style.display = "none";
+}
+
+window.onclick = function(event) {
+  const modal = document.getElementById("quoteModal");
+  if (event.target == modal) {
+    modal.style.display = "none";
+  }
+}
+</script>
+
+<style>
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 999;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+  background: #fff;
+  margin: 5% auto;
+  padding: 20px;
+  width: 70%;
+  border-radius: 8px;
+}
+
+.close {
+  float: right;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.btn-view {
+  padding: 6px 12px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+</style>
+
 {% endblock %}
