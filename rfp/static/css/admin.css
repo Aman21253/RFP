@@ -540,3 +540,25 @@ body {
   background: #f3f4f6;
   font-weight: 600;
 }
+
+a.btn,
+a.btn-primary,
+a.btn-secondary,
+a.btn-add,
+a.action,
+a.pg,
+a.page-btn,
+a.page-current {
+  text-decoration: none !important;
+}
+
+a.btn:hover,
+a.btn-primary:hover,
+a.btn-secondary:hover,
+a.btn-add:hover,
+a.action:hover,
+a.pg:hover,
+a.page-btn:hover,
+a.page-current:hover {
+  text-decoration: none !important;
+}
