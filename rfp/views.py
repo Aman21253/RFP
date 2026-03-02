@@ -19,15 +19,30 @@ from datetime import timedelta
 from .models import Vendor, Category, RFP, Quote, QuoteItem, AuthConfig, LoginOTP
 
 
-# ---------------- AUTH ----------------
+# ---------------- AUTH CONFIG HELPER ----------------
+def get_auth_config():
+    """
+    Creates config row if not present.
+    NOTE: This assumes AuthConfig has fields:
+    - enable_vendor_2fa (BooleanField)
+    - otp_expiry_minutes (IntegerField)
+    """
+    cfg, _ = AuthConfig.objects.get_or_create(
+        id=1,
+        defaults={
+            "enable_vendor_2fa": True,
+            "otp_expiry_minutes": 10,
+        }
+    )
+    return cfg
 
+
+# ---------------- LOGIN ----------------
 def login_view(request):
     if request.user.is_authenticated:
         if request.user.is_staff or request.user.is_superuser:
             return redirect("admin_dashboard")
         return redirect("vendor_dashboard")
-
-    error = None
 
     if request.method == "POST":
         email = (request.POST.get("email") or "").strip().lower()
@@ -37,7 +52,7 @@ def login_view(request):
         if not user:
             return render(request, "rfp/login.html", {"error": "Invalid credentials"})
 
-        # Admin login directly
+        # Admin login directly (no OTP)
         if user.is_staff or user.is_superuser:
             login(request, user)
             return redirect("admin_dashboard")
@@ -52,14 +67,17 @@ def login_view(request):
             return render(request, "rfp/login.html", {"error": "Your account is not approved yet."})
 
         # Check backend config
-        cfg = AuthConfig.get_solo()
+        cfg = get_auth_config()
         if not cfg.enable_vendor_2fa:
             login(request, user)
             return redirect("vendor_dashboard")
 
-        # Create OTP + store pending login in session
+        # OPTIONAL: Invalidate previous OTPs (recommended)
+        LoginOTP.objects.filter(email=email, is_used=False).update(is_used=True)
+
+        # Create OTP
         otp = LoginOTP.generate_otp()
-        expires_at = timezone.now() + timedelta(minutes=cfg.otp_expiry_minutes)
+        expires_at = timezone.now() + timedelta(minutes=int(cfg.otp_expiry_minutes or 10))
 
         LoginOTP.objects.create(
             email=email,
@@ -67,20 +85,31 @@ def login_view(request):
             expires_at=expires_at
         )
 
-        # send OTP (email)
-        send_mail(
-            subject="Your Login OTP",
-            message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[email],
-            fail_silently=False
-        )
-
+        # Store pending login in session FIRST
         request.session["pending_2fa_email"] = email
         request.session["pending_2fa_user_id"] = user.id
+
+        # Send OTP (email) safely (NO 500 error)
+        try:
+            send_mail(
+                subject="Your Login OTP",
+                message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            # cleanup session if email fails
+            request.session.pop("pending_2fa_email", None)
+            request.session.pop("pending_2fa_user_id", None)
+            return render(request, "rfp/login.html", {"error": f"OTP email failed: {e}"})
+
         return redirect("vendor_verify_otp")
 
-    return render(request, "rfp/login.html", {"error": error})
+    return render(request, "rfp/login.html")
+
+
+# ---------------- VERIFY OTP ----------------
 
 @require_http_methods(["GET", "POST"])
 def vendor_verify_otp(request):
@@ -126,29 +155,41 @@ def vendor_verify_otp(request):
     return render(request, "rfp/vendor_verify_otp.html")
 
 
+# ---------------- RESEND OTP ----------------
+
 @require_POST
 def vendor_resend_otp(request):
     email = request.session.get("pending_2fa_email")
     user_id = request.session.get("pending_2fa_user_id")
+
     if not email or not user_id:
         return redirect("login")
 
-    cfg = AuthConfig.get_solo()
+    cfg = get_auth_config()
+
+    # OPTIONAL: invalidate old OTPs
+    LoginOTP.objects.filter(email=email, is_used=False).update(is_used=True)
+
     otp = LoginOTP.generate_otp()
-    expires_at = timezone.now() + timedelta(minutes=cfg.otp_expiry_minutes)
+    expires_at = timezone.now() + timedelta(minutes=int(cfg.otp_expiry_minutes or 10))
 
     LoginOTP.objects.create(email=email, otp=otp, expires_at=expires_at)
 
-    send_mail(
-        subject="Your Login OTP (Resent)",
-        message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[email],
-        fail_silently=False
-    )
+    try:
+        send_mail(
+            subject="Your Login OTP (Resent)",
+            message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=False
+        )
+    except Exception as e:
+        return render(request, "rfp/vendor_verify_otp.html", {"error": f"OTP resend failed: {e}"})
 
     return redirect("vendor_verify_otp")
 
+
+# ---------------- LOGOUT ----------------
 @login_required
 def logout_view(request):
     logout(request)
