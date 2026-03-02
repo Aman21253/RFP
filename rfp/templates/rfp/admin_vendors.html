@@ -9,11 +9,12 @@
 
 <div class="card">
   <div class="card-head">
-    <h3>Vendors</h3>
-  </div>
-  <a href="{% url 'export_vendors_excel' %}" class="btn-add">
+  <h3>Vendors</h3>
+
+  <a href="{% url 'export_vendors_excel' %}" class="btn-add btn-link">
     Download Excel
   </a>
+</div>
 
   {% if messages %}
     <div class="msg-wrap">
