@@ -1,0 +1,109 @@
+{% extends "rfp/base_admin.html" %}
+{% block content %}
+
+<h2>Reports</h2>
+<p style="color:#6b7280;">Summary of Vendors and RFPs</p>
+
+<!-- ================= Vendor Summary ================= -->
+
+<div class="card">
+  <h3>Vendor Summary</h3>
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Total Vendors</th>
+        <th>Approved</th>
+        <th>Pending</th>
+        <th>Rejected</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>{{ total_vendors }}</td>
+        <td>{{ approved_vendors }}</td>
+        <td>{{ pending_vendors }}</td>
+        <td>{{ rejected_vendors }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<br>
+
+<!-- ================= Category-wise Vendors ================= -->
+
+<div class="card">
+  <h3>Category-wise Vendors</h3>
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Total Vendors</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in vendor_category_stats %}
+      <tr>
+        <td>{{ item.name }}</td>
+        <td>{{ item.total }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<br>
+
+<!-- ================= RFP Summary ================= -->
+
+<div class="card">
+  <h3>RFP Summary</h3>
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Total RFP</th>
+        <th>Open</th>
+        <th>Closed</th>
+        <th>Expired</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>{{ total_rfp }}</td>
+        <td>{{ open_rfp }}</td>
+        <td>{{ closed_rfp }}</td>
+        <td>{{ expired_rfp }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<br>
+
+<!-- ================= Category-wise RFP ================= -->
+
+<div class="card">
+  <h3>Category-wise RFP</h3>
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Total RFP</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in rfp_category_stats %}
+      <tr>
+        <td>{{ item.name }}</td>
+        <td>{{ item.total }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

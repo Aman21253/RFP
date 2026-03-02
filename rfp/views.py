@@ -13,6 +13,7 @@ from django.db.models import Q
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 import random
+from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 from .models import Vendor, Category, RFP, Quote, QuoteItem, AuthConfig, LoginOTP
@@ -985,3 +986,53 @@ def export_rfp_excel(request):
 
     wb.save(response)
     return response
+
+@login_required
+def admin_reports(request):
+    if not _admin_only(request):
+        return redirect("login")
+
+    # ---------------- Vendor Report ----------------
+    total_vendors = Vendor.objects.count()
+    approved_vendors = Vendor.objects.filter(status=Vendor.ApprovalStatus.APPROVED).count()
+    pending_vendors = Vendor.objects.filter(status=Vendor.ApprovalStatus.PENDING).count()
+    rejected_vendors = Vendor.objects.filter(status=Vendor.ApprovalStatus.REJECTED).count()
+
+    # Category-wise vendor count
+    vendor_category_stats = (
+        Category.objects
+        .annotate(total=models.Count("vendors"))
+        .values("name", "total")
+    )
+
+    # ---------------- RFP Report ----------------
+    total_rfp = RFP.objects.count()
+    open_rfp = RFP.objects.filter(status=RFP.Status.OPEN).count()
+    closed_rfp = RFP.objects.filter(status=RFP.Status.CLOSED).count()
+
+    expired_rfp = RFP.objects.filter(
+        status=RFP.Status.OPEN,
+        last_date__lt=timezone.now().date()
+    ).count()
+
+    rfp_category_stats = (
+        Category.objects
+        .annotate(total=models.Count("rfps"))
+        .values("name", "total")
+    )
+
+    context = {
+        "total_vendors": total_vendors,
+        "approved_vendors": approved_vendors,
+        "pending_vendors": pending_vendors,
+        "rejected_vendors": rejected_vendors,
+        "vendor_category_stats": vendor_category_stats,
+
+        "total_rfp": total_rfp,
+        "open_rfp": open_rfp,
+        "closed_rfp": closed_rfp,
+        "expired_rfp": expired_rfp,
+        "rfp_category_stats": rfp_category_stats,
+    }
+
+    return render(request, "rfp/admin_reports.html", context)

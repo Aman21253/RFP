@@ -46,4 +46,6 @@ urlpatterns = [
     path("panel/categories/export/", views.export_categories_excel, name="export_categories_excel"),
     path("panel/vendors/export/", views.export_vendors_excel, name="export_vendors_excel"),
     path("panel/rfp/export/", views.export_rfp_excel, name="export_rfp_excel"),
+
+    path("panel/reports/", views.admin_reports, name="admin_reports"),
 ]
