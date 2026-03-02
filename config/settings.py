@@ -89,10 +89,10 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": "rfp_management_db",
-        "USER": "rfp_user",
-        "PASSWORD": "StrongPassword@123",
-        "HOST": "localhost",
+        "NAME": "amanbansal$rfp",
+        "USER": "amanbansal",
+        "PASSWORD": "your_mysql_password",
+        "HOST": "amanbansal.mysql.pythonanywhere-services.com",
         "PORT": "3306",
         "OPTIONS": {
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
