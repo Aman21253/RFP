@@ -102,7 +102,7 @@ def login_view(request):
             # cleanup session if email fails
             request.session.pop("pending_2fa_email", None)
             request.session.pop("pending_2fa_user_id", None)
-            return render(request, "rfp/login.html", {"error": f"OTP email failed: {e}"})
+            return render(request, "rfp/login.html", {"error": "OTP email failed. Please try again later."})
 
         return redirect("vendor_verify_otp")
 
