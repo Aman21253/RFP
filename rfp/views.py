@@ -16,6 +16,7 @@ import random
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
+from .emailer import send_email_sendgrid
 from .models import Vendor, Category, RFP, Quote, QuoteItem, AuthConfig, LoginOTP
 
 
@@ -31,21 +32,8 @@ def get_auth_config():
     return cfg
 
 
-def _send_email_safe(subject: str, message: str, to_email: str):
-    """
-    Central safe email sender (prevents 500 + worker timeout).
-    Raises exception to caller if fails.
-    """
-    if not settings.DEFAULT_FROM_EMAIL:
-        raise Exception("DEFAULT_FROM_EMAIL is not set")
-
-    send_mail(
-        subject=subject,
-        message=message,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[to_email],
-        fail_silently=False,
-    )
+def _send_email_safe(subject, message, to_email):
+    send_email_sendgrid(subject, message, to_email)
 
 
 # ---------------- LOGIN ----------------
