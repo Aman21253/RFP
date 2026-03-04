@@ -84,19 +84,23 @@ def login_view(request):
         otp = LoginOTP.generate_otp()
         expires_at = timezone.now() + timedelta(minutes=int(cfg.otp_expiry_minutes or 10))
 
-        # Store pending login in session FIRST
-        request.session["pending_2fa_email"] = email
-        request.session["pending_2fa_user_id"] = user.id
-
-        # Create OTP row + Send OTP (email) safely (no worker-kill mystery)
-        otp_row = None
+        # Create OTP row (REQUIRED for login flow)
         try:
-            otp_row = LoginOTP.objects.create(
+            LoginOTP.objects.create(
                 email=email,
                 otp=otp,
                 expires_at=expires_at
             )
+        except Exception as e:
+            logger.exception("Failed to create OTP row for %s", email)
+            return render(request, "rfp/login.html", {"error": "Login failed. Please try again."})
 
+        # Store pending login in session
+        request.session["pending_2fa_email"] = email
+        request.session["pending_2fa_user_id"] = user.id
+
+        # Send OTP email ASYNC (don't block user flow) - ignore failures
+        try:
             send_mail(
                 subject="Your Login OTP",
                 message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
@@ -104,24 +108,11 @@ def login_view(request):
                 recipient_list=[email],
                 fail_silently=True,
             )
-
         except Exception as e:
-            # Log full error to Render logs
-            logger.exception("OTP email send failed for %s", email)
-            traceback.print_exc()
+            # Log but don't crash - user can still login
+            logger.error("OTP email send error for %s: %s", email, str(e))
 
-            # cleanup session
-            request.session.pop("pending_2fa_email", None)
-            request.session.pop("pending_2fa_user_id", None)
-
-            # delete otp row if created
-            if otp_row:
-                otp_row.delete()
-
-            return render(request, "rfp/login.html", {
-                "error": f"OTP email failed: {str(e)}"
-            })
-
+        # User proceeds to OTP verification (email may or may not have arrived)
         return redirect("vendor_verify_otp")
 
     return render(request, "rfp/login.html")
@@ -189,10 +180,15 @@ def vendor_resend_otp(request):
     otp = LoginOTP.generate_otp()
     expires_at = timezone.now() + timedelta(minutes=int(cfg.otp_expiry_minutes or 10))
 
-    otp_row = None
+    # Create new OTP row (CRITICAL for verification flow)
     try:
-        otp_row = LoginOTP.objects.create(email=email, otp=otp, expires_at=expires_at)
+        LoginOTP.objects.create(email=email, otp=otp, expires_at=expires_at)
+    except Exception as e:
+        logger.exception("Failed to create resend OTP row for %s", email)
+        return render(request, "rfp/vendor_verify_otp.html", {"error": "Failed to resend OTP."})
 
+    # Send OTP email - ignore failures (don't block)
+    try:
         send_mail(
             subject="Your Login OTP (Resent)",
             message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
@@ -200,15 +196,8 @@ def vendor_resend_otp(request):
             recipient_list=[email],
             fail_silently=True
         )
-
     except Exception as e:
-        logger.exception("Resend OTP email failed for %s", email)
-        traceback.print_exc()
-
-        if otp_row:
-            otp_row.delete()
-
-        return render(request, "rfp/vendor_verify_otp.html", {"error": f"OTP resend failed: {e}"})
+        logger.error("Resend OTP email failed for %s: %s", email, str(e))
 
     return redirect("vendor_verify_otp")
 
@@ -354,13 +343,17 @@ def forgot_password(request):
                 request.session["reset_otp"] = otp
                 request.session["otp_sent"] = True
 
-                send_mail(
-                    subject="Your OTP for Password Reset",
-                    message=f"Your OTP is: {otp}",
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[email],
-                    fail_silently=True,
-                )
+                try:
+                    send_mail(
+                        subject="Your OTP for Password Reset",
+                        message=f"Your OTP is: {otp}",
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[email],
+                        fail_silently=True,
+                    )
+                except Exception as e:
+                    logger.error("Password reset OTP email failed for %s: %s", email, str(e))
+
                 message = "OTP sent to your registered email."
                 otp_sent = True
 
