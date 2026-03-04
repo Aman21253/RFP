@@ -35,7 +35,6 @@ def get_auth_config():
 def _send_email_safe(subject, message, to_email):
     send_email_sendgrid(subject, message, to_email)
 
-
 # ---------------- LOGIN ----------------
 def login_view(request):
     if request.user.is_authenticated:
