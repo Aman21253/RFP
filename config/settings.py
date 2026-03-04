@@ -18,10 +18,13 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # --- Static ---
-STATIC_URL = "/static/"
-STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
-STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+STATICFILES_DIRS = []
+# or only add if folder exists
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+if os.path.isdir(STATIC_DIR):
+    STATICFILES_DIRS = [STATIC_DIR]
+else:
+    STATICFILES_DIRS = []
 
 # --- Secret key (Render env recommended) ---
 # Put SECRET_KEY in Render Environment Variables
