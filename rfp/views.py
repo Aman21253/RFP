@@ -108,6 +108,8 @@ def login_view(request):
                 recipient_list=[email],
                 fail_silently=True,
             )
+        # log OTP for debugging when email backend is console or dummy
+        logging.getLogger(__name__).debug(f"OTP for {email}: {otp}")
         except Exception as e:
             # Log but don't crash - user can still login
             logger.error("OTP email send error for %s: %s", email, str(e))

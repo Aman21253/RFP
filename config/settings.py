@@ -112,10 +112,10 @@ if SENDGRID_API_KEY:
     EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
     EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "10"))
 else:
-    # NO credentials - use dummy backend to prevent socket timeouts
-    EMAIL_BACKEND = "django.core.mail.backends.dummy.EmailBackend"
+    # No SendGrid key: fall back to console backend so OTP appears in logs
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
     logger_cfg = logging.getLogger(__name__)
-    logger_cfg.warning("⚠️  SendGrid not configured. Emails will be discarded. Set SENDGRID_API_KEY in env.")
+    logger_cfg.warning("⚠️  SendGrid not configured. Using console email backend; OTPs will be logged.")
 
 # This must match a VERIFIED Single Sender email in SendGrid
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@example.com")
