@@ -91,7 +91,7 @@ else:
     # Fallback to SMTP (SendGrid SMTP)
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = "smtp.sendgrid.net"
-    EMAIL_PORT = 587
+    EMAIL_PORT = 2525
     EMAIL_HOST_USER = "apikey"
     EMAIL_HOST_PASSWORD = os.environ.get("SENDGRID_SMTP_PASSWORD", "")
     EMAIL_USE_TLS = True
