@@ -97,7 +97,7 @@ else:
     EMAIL_HOST_PASSWORD = os.environ.get("SENDGRID_SMTP_PASSWORD", "")
     EMAIL_USE_TLS = True
 
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@example.com")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "aman.bansal@velsof.com")
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # Database
