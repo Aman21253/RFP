@@ -102,7 +102,7 @@ def login_view(request):
                 message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[email],
-                fail_silently=False,
+                fail_silently=True,
             )
 
         except Exception as e:
@@ -198,7 +198,7 @@ def vendor_resend_otp(request):
             message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[email],
-            fail_silently=False
+            fail_silently=True
         )
 
     except Exception as e:
@@ -359,7 +359,7 @@ def forgot_password(request):
                     message=f"Your OTP is: {otp}",
                     from_email=settings.DEFAULT_FROM_EMAIL,
                     recipient_list=[email],
-                    fail_silently=False,
+                    fail_silently=True,
                 )
                 message = "OTP sent to your registered email."
                 otp_sent = True
