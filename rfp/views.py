@@ -1,5 +1,13 @@
+# rfp/views.py
+
 from decimal import Decimal, InvalidOperation
+from datetime import timedelta
+import random
+import logging
+import traceback
+
 from openpyxl import Workbook
+
 from django.http import HttpResponse
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
@@ -9,23 +17,20 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Q, Count
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
-import random
-from django.db import models
 from django.utils import timezone
-from datetime import timedelta
+
 from .models import Vendor, Category, RFP, Quote, QuoteItem, AuthConfig, LoginOTP
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------- AUTH CONFIG HELPER ----------------
 def get_auth_config():
     """
     Creates config row if not present.
-    NOTE: This assumes AuthConfig has fields:
-    - enable_vendor_2fa (BooleanField)
-    - otp_expiry_minutes (IntegerField)
     """
     cfg, _ = AuthConfig.objects.get_or_create(
         id=1,
@@ -72,25 +77,26 @@ def login_view(request):
             login(request, user)
             return redirect("vendor_dashboard")
 
-        # OPTIONAL: Invalidate previous OTPs (recommended)
+        # Invalidate previous OTPs
         LoginOTP.objects.filter(email=email, is_used=False).update(is_used=True)
 
-        # Create OTP
+        # Create OTP + expiry
         otp = LoginOTP.generate_otp()
         expires_at = timezone.now() + timedelta(minutes=int(cfg.otp_expiry_minutes or 10))
-
-        LoginOTP.objects.create(
-            email=email,
-            otp=otp,
-            expires_at=expires_at
-        )
 
         # Store pending login in session FIRST
         request.session["pending_2fa_email"] = email
         request.session["pending_2fa_user_id"] = user.id
 
-        # Send OTP (email) safely (NO 500 error)
+        # Create OTP row + Send OTP (email) safely (no worker-kill mystery)
+        otp_row = None
         try:
+            otp_row = LoginOTP.objects.create(
+                email=email,
+                otp=otp,
+                expires_at=expires_at
+            )
+
             send_mail(
                 subject="Your Login OTP",
                 message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
@@ -98,11 +104,23 @@ def login_view(request):
                 recipient_list=[email],
                 fail_silently=False,
             )
+
         except Exception as e:
-            # cleanup session if email fails
+            # Log full error to Render logs
+            logger.exception("OTP email send failed for %s", email)
+            traceback.print_exc()
+
+            # cleanup session
             request.session.pop("pending_2fa_email", None)
             request.session.pop("pending_2fa_user_id", None)
-            return render(request, "rfp/login.html", {"error": "OTP email failed. Please try again later."})
+
+            # delete otp row if created
+            if otp_row:
+                otp_row.delete()
+
+            return render(request, "rfp/login.html", {
+                "error": f"OTP email failed: {str(e)}"
+            })
 
         return redirect("vendor_verify_otp")
 
@@ -110,7 +128,6 @@ def login_view(request):
 
 
 # ---------------- VERIFY OTP ----------------
-
 @require_http_methods(["GET", "POST"])
 def vendor_verify_otp(request):
     email = request.session.get("pending_2fa_email")
@@ -156,7 +173,6 @@ def vendor_verify_otp(request):
 
 
 # ---------------- RESEND OTP ----------------
-
 @require_POST
 def vendor_resend_otp(request):
     email = request.session.get("pending_2fa_email")
@@ -167,15 +183,16 @@ def vendor_resend_otp(request):
 
     cfg = get_auth_config()
 
-    # OPTIONAL: invalidate old OTPs
+    # invalidate old OTPs
     LoginOTP.objects.filter(email=email, is_used=False).update(is_used=True)
 
     otp = LoginOTP.generate_otp()
     expires_at = timezone.now() + timedelta(minutes=int(cfg.otp_expiry_minutes or 10))
 
-    LoginOTP.objects.create(email=email, otp=otp, expires_at=expires_at)
-
+    otp_row = None
     try:
+        otp_row = LoginOTP.objects.create(email=email, otp=otp, expires_at=expires_at)
+
         send_mail(
             subject="Your Login OTP (Resent)",
             message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
@@ -183,7 +200,14 @@ def vendor_resend_otp(request):
             recipient_list=[email],
             fail_silently=False
         )
+
     except Exception as e:
+        logger.exception("Resend OTP email failed for %s", email)
+        traceback.print_exc()
+
+        if otp_row:
+            otp_row.delete()
+
         return render(request, "rfp/vendor_verify_otp.html", {"error": f"OTP resend failed: {e}"})
 
     return redirect("vendor_verify_otp")
@@ -196,6 +220,7 @@ def logout_view(request):
     return redirect("login")
 
 
+# ---------------- SIGNUP ----------------
 def admin_signup(request):
     error = None
 
@@ -228,7 +253,6 @@ def admin_signup(request):
 
 def vendor_signup(request):
     categories = Category.objects.filter(status=Category.Status.ACTIVE)
-    error = None
 
     if request.method == "POST":
         f_name = (request.POST.get("f_name") or "").strip()
@@ -238,14 +262,12 @@ def vendor_signup(request):
         password = request.POST.get("password") or ""
         confirm_password = request.POST.get("confirm_password") or ""
 
-        # ✅ these names come from your HTML
         revenue_raw = (request.POST.get("revenue") or "").strip()
         employees_raw = (request.POST.get("employees") or "").strip()
-        gst_no = (request.POST.get("gst") or "").strip()      # ✅ HTML name="gst"
-        pan_no = (request.POST.get("pan") or "").strip()      # ✅ HTML name="pan"
-        category_id = (request.POST.get("category_id") or "").strip()  # ✅ HTML name="category_id"
+        gst_no = (request.POST.get("gst") or "").strip()
+        pan_no = (request.POST.get("pan") or "").strip()
+        category_id = (request.POST.get("category_id") or "").strip()
 
-        # ---- validations ----
         if password != confirm_password:
             messages.error(request, "Passwords do not match.")
             return render(request, "rfp/vendor_signup.html", {"categories": categories})
@@ -258,7 +280,6 @@ def vendor_signup(request):
             messages.error(request, "Phone already exists.")
             return render(request, "rfp/vendor_signup.html", {"categories": categories})
 
-        # parse revenue / employees
         revenue = None
         try:
             revenue = Decimal(revenue_raw) if revenue_raw else None
@@ -282,14 +303,12 @@ def vendor_signup(request):
 
         try:
             with transaction.atomic():
-                # create auth user
                 user = User.objects.create_user(
                     username=email,
                     email=email,
                     password=password
                 )
 
-                # create vendor profile
                 Vendor.objects.create(
                     first_name=f_name,
                     last_name=l_name,
@@ -300,13 +319,10 @@ def vendor_signup(request):
                     gst_no=gst_no,
                     pan_no=pan_no,
                     category=category,
-                    status=Vendor.ApprovalStatus.PENDING,  # recommended
+                    status=Vendor.ApprovalStatus.PENDING,
                 )
 
-            # auto login vendor
-            from django.contrib.auth import login
             login(request, user)
-
             messages.success(request, "Registered successfully! Wait for admin approval.")
             return redirect("vendor_dashboard")
 
@@ -316,8 +332,8 @@ def vendor_signup(request):
 
     return render(request, "rfp/vendor_signup.html", {"categories": categories})
 
-# ---------------- PASSWORD RESET ----------------
 
+# ---------------- PASSWORD RESET ----------------
 def forgot_password(request):
     message = None
     error = None
@@ -349,7 +365,6 @@ def forgot_password(request):
                 otp_sent = True
 
         elif action == "verify_otp":
-            email = (request.POST.get("email") or "").strip().lower()
             otp_entered = (request.POST.get("otp") or "").strip()
             otp_saved = request.session.get("reset_otp")
 
@@ -399,13 +414,11 @@ def reset_password(request):
 
 
 # ---------------- ADMIN HELPERS ----------------
-
 def _admin_only(request):
     return request.user.is_authenticated and request.user.is_staff
 
 
 # ---------------- ADMIN PANEL ----------------
-
 @login_required
 def admin_dashboard(request):
     if not _admin_only(request):
@@ -426,10 +439,7 @@ def admin_categories(request):
 
     page_obj = Paginator(qs, 10).get_page(request.GET.get("page"))
 
-    return render(request, "rfp/admin_categories.html", {
-        "page_obj": page_obj,
-        "q": q
-    })
+    return render(request, "rfp/admin_categories.html", {"page_obj": page_obj, "q": q})
 
 
 @login_required
@@ -470,6 +480,7 @@ def admin_category_toggle(request, pk):
     messages.success(request, "Status updated.")
     return redirect("admin_categories")
 
+
 @login_required
 def admin_vendors(request):
     if not _admin_only(request):
@@ -491,7 +502,11 @@ def admin_vendor_toggle(request, pk):
         messages.error(request, "Vendor not found.")
         return redirect("admin_vendors")
 
-    vendor.status = Vendor.ApprovalStatus.REJECTED if vendor.status == Vendor.ApprovalStatus.APPROVED else Vendor.ApprovalStatus.APPROVED
+    vendor.status = (
+        Vendor.ApprovalStatus.REJECTED
+        if vendor.status == Vendor.ApprovalStatus.APPROVED
+        else Vendor.ApprovalStatus.APPROVED
+    )
     vendor.save(update_fields=["status"])
 
     messages.success(request, "Vendor status updated.")
@@ -525,9 +540,7 @@ def admin_rfp_select_category(request):
 
         return redirect("admin_rfp_add", category_id=category_id)
 
-    return render(request, "rfp/admin_rfp_select_category.html", {
-        "categories": categories
-    })
+    return render(request, "rfp/admin_rfp_select_category.html", {"categories": categories})
 
 
 @login_required
@@ -535,23 +548,15 @@ def admin_rfp_add(request, category_id):
     if not request.user.is_staff:
         return redirect("login")
 
-    category = Category.objects.filter(
-        id=category_id,
-        status=Category.Status.ACTIVE
-    ).first()
-
+    category = Category.objects.filter(id=category_id, status=Category.Status.ACTIVE).first()
     if not category:
         messages.error(request, "Invalid category.")
         return redirect("admin_rfp_select_category")
 
-    vendors = (
-        Vendor.objects
-        .filter(
-            status=Vendor.ApprovalStatus.APPROVED,
-            category=category
-        )
-        .order_by("-id")
-    )
+    vendors = Vendor.objects.filter(
+        status=Vendor.ApprovalStatus.APPROVED,
+        category=category
+    ).order_by("-id")
 
     if request.method == "POST":
         title = request.POST.get("title")
@@ -572,16 +577,12 @@ def admin_rfp_add(request, category_id):
             max_amount=max_amount,
             status=RFP.Status.OPEN
         )
-
         rfp.assigned_vendors.set(vendor_ids)
 
         messages.success(request, "RFP created successfully.")
         return redirect("admin_rfp_list")
 
-    return render(request, "rfp/admin_rfp_add.html", {
-        "category": category,
-        "vendors": vendors
-    })
+    return render(request, "rfp/admin_rfp_add.html", {"category": category, "vendors": vendors})
 
 
 @login_required
@@ -606,56 +607,42 @@ def admin_quotes(request):
     if not _admin_only(request):
         return redirect("login")
 
-    # We need item-wise rows like the screenshot
-    qs = (
-        QuoteItem.objects
-        .select_related("quote", "quote__rfp", "quote__vendor")
-        .order_by("-id")
-    )
+    qs = QuoteItem.objects.select_related(
+        "quote", "quote__rfp", "quote__vendor"
+    ).order_by("-id")
 
     page_obj = Paginator(qs, 10).get_page(request.GET.get("page"))
 
-    return render(request, "rfp/admin_quotes.html", {
-        "page_obj": page_obj
-    })
+    return render(request, "rfp/admin_quotes.html", {"page_obj": page_obj})
 
 
 # ---------------- VENDOR HELPERS ----------------
+def _get_vendor(request):
+    email = (request.user.email or request.user.username or "").strip().lower()
+    return Vendor.objects.filter(email=email).first()
+
 
 def _vendor_only(request):
     if not request.user.is_authenticated:
         return False
     if request.user.is_staff or request.user.is_superuser:
         return False
-
     vendor = _get_vendor(request)
     return vendor and vendor.status == Vendor.ApprovalStatus.APPROVED
 
 
-def _get_vendor(request):
-    email = (request.user.email or request.user.username or "").strip().lower()
-    return Vendor.objects.filter(email=email).first()
-
-
 # ---------------- VENDOR PANEL ----------------
-
 @login_required
 def vendor_dashboard(request):
-
-    # If admin → admin dashboard
     if request.user.is_staff:
         return redirect("admin_dashboard")
-    # Since email stored as username
+
     email = request.user.username
-
     vendor = Vendor.objects.filter(email=email).first()
-
     if not vendor:
         return redirect("login")
 
-    return render(request, "rfp/vendor_dashboard.html", {
-        "vendor": vendor
-    })
+    return render(request, "rfp/vendor_dashboard.html", {"vendor": vendor})
 
 
 @login_required
@@ -668,15 +655,10 @@ def vendor_rfp_list(request):
         messages.error(request, "Vendor profile not found.")
         return redirect("login")
 
-    rfps = (
-        RFP.objects
-        .select_related("category")
-        .filter(
-            status=RFP.Status.OPEN,
-            assigned_vendors=vendor
-        )
-        .order_by("-id")
-    )
+    rfps = RFP.objects.select_related("category").filter(
+        status=RFP.Status.OPEN,
+        assigned_vendors=vendor
+    ).order_by("-id")
 
     return render(request, "rfp/rfp_list.html", {"rfps": rfps})
 
@@ -699,10 +681,7 @@ def vendor_rfp_detail(request, pk):
 
     existing_quote = Quote.objects.filter(rfp=rfp, vendor=vendor).first()
 
-    return render(request, "rfp/rfp_detail.html", {
-        "rfp": rfp,
-        "existing_quote": existing_quote
-    })
+    return render(request, "rfp/rfp_detail.html", {"rfp": rfp, "existing_quote": existing_quote})
 
 
 @login_required
@@ -766,13 +745,11 @@ def vendor_quote_submit(request, rfp_id):
         prices = request.POST.getlist("vendor_price")
         quantities = request.POST.getlist("quantity")
 
-        # ✅ Validate: at least one row present
         if not item_names:
             messages.error(request, "Please add at least one item.")
             return redirect("vendor_quote_submit", rfp_id=rfp.id)
 
         with transaction.atomic():
-            # Remove old items (re-submit case)
             quote.items.all().delete()
 
             for i in range(len(item_names)):
@@ -780,14 +757,12 @@ def vendor_quote_submit(request, rfp_id):
                 if not name:
                     continue
 
-                # Convert vendor_price -> Decimal safely
                 raw_price = (prices[i] if i < len(prices) else "") or "0"
                 try:
                     price = Decimal(str(raw_price).strip() or "0")
                 except (InvalidOperation, TypeError, ValueError):
                     price = Decimal("0")
 
-                # Convert quantity -> int safely
                 raw_qty = (quantities[i] if i < len(quantities) else "") or "1"
                 try:
                     qty = int(str(raw_qty).strip() or "1")
@@ -797,20 +772,16 @@ def vendor_quote_submit(request, rfp_id):
                 QuoteItem.objects.create(
                     quote=quote,
                     item_name=name,
-                    vendor_price=price,  # Decimal
-                    quantity=qty         # int
+                    vendor_price=price,
+                    quantity=qty
                 )
 
         messages.success(request, "Quote submitted successfully.")
         return redirect("vendor_quote_list")
 
-    return render(request, "rfp/quote_submit.html", {
-        "rfp": rfp,
-        "quote": quote,
-        "items": quote.items.all()
-    })
+    return render(request, "rfp/quote_submit.html", {"rfp": rfp, "quote": quote, "items": quote.items.all()})
 
-# quote
+
 @login_required
 def vendor_rfp_for_quotes(request):
     if not _vendor_only(request):
@@ -821,29 +792,21 @@ def vendor_rfp_for_quotes(request):
         messages.error(request, "Vendor profile not found.")
         return redirect("login")
 
-    qs = (
-        RFP.objects
-        .select_related("category")
-        .filter(
-            status=RFP.Status.OPEN,
-            assigned_vendors=vendor
-        )
-        .order_by("-id")
-    )
+    qs = RFP.objects.select_related("category").filter(
+        status=RFP.Status.OPEN,
+        assigned_vendors=vendor
+    ).order_by("-id")
 
     paginator = Paginator(qs, 10)
     page_obj = paginator.get_page(request.GET.get("page"))
 
     rfp_ids = [r.id for r in page_obj.object_list]
     quoted_ids = set(
-        Quote.objects.filter(vendor=vendor, rfp_id__in=rfp_ids)
-        .values_list("rfp_id", flat=True)
+        Quote.objects.filter(vendor=vendor, rfp_id__in=rfp_ids).values_list("rfp_id", flat=True)
     )
 
-    return render(request, "rfp/rfp_for_quotes.html", {
-        "page_obj": page_obj,
-        "quoted_ids": quoted_ids,
-    })
+    return render(request, "rfp/rfp_for_quotes.html", {"page_obj": page_obj, "quoted_ids": quoted_ids})
+
 
 @login_required
 @require_http_methods(["GET", "POST"])
@@ -862,26 +825,20 @@ def vendor_apply_rfp(request, rfp_id):
         messages.error(request, "This RFP is closed.")
         return redirect("vendor_rfp_for_quotes")
 
-    quote, created = Quote.objects.get_or_create(rfp=rfp, vendor=vendor)
+    quote, _ = Quote.objects.get_or_create(rfp=rfp, vendor=vendor)
 
     if request.method == "GET":
-        return render(request, "rfp/quote_submit.html", {
-            "rfp": rfp,
-            "quote": quote,
-            "items": quote.items.all()
-        })
+        return render(request, "rfp/quote_submit.html", {"rfp": rfp, "quote": quote, "items": quote.items.all()})
 
     item_names = request.POST.getlist("item_name")
     prices = request.POST.getlist("vendor_price")
     quantities = request.POST.getlist("quantity")
 
-    # ✅ Validate: at least one row present
     if not item_names:
         messages.error(request, "Please add at least one item.")
         return redirect("vendor_apply_rfp", rfp_id=rfp.id)
 
     with transaction.atomic():
-        # Remove old items (re-submit case)
         quote.items.all().delete()
 
         for i in range(len(item_names)):
@@ -889,7 +846,6 @@ def vendor_apply_rfp(request, rfp_id):
             if not name:
                 continue
 
-            # ✅ price -> Decimal safely
             raw_price = (prices[i] if i < len(prices) else "") or "0"
             try:
                 price = Decimal(str(raw_price).strip() or "0")
@@ -912,6 +868,8 @@ def vendor_apply_rfp(request, rfp_id):
     messages.success(request, "Quote submitted successfully.")
     return redirect("vendor_quote_list")
 
+
+# ---------------- EXPORT EXCEL ----------------
 @login_required
 def export_categories_excel(request):
     if not _admin_only(request):
@@ -921,26 +879,19 @@ def export_categories_excel(request):
     ws = wb.active
     ws.title = "Categories"
 
-    # Header
     ws.append(["ID", "Category Name", "Status", "Created At"])
-
     categories = Category.objects.all().order_by("id")
 
     for c in categories:
-        ws.append([
-            c.id,
-            c.name,
-            c.status,
-            c.created_at.strftime("%Y-%m-%d %H:%M")
-        ])
+        ws.append([c.id, c.name, c.status, c.created_at.strftime("%Y-%m-%d %H:%M")])
 
     response = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     response["Content-Disposition"] = "attachment; filename=categories.xlsx"
-
     wb.save(response)
     return response
+
 
 @login_required
 def export_vendors_excel(request):
@@ -951,21 +902,9 @@ def export_vendors_excel(request):
     ws = wb.active
     ws.title = "Vendors"
 
-    ws.append([
-        "ID",
-        "Name",
-        "Email",
-        "Phone",
-        "Category",
-        "Revenue (Lakhs)",
-        "Employees",
-        "GST",
-        "PAN",
-        "Status"
-    ])
+    ws.append(["ID", "Name", "Email", "Phone", "Category", "Revenue (Lakhs)", "Employees", "GST", "PAN", "Status"])
 
     vendors = Vendor.objects.select_related("category").all().order_by("id")
-
     for v in vendors:
         ws.append([
             v.id,
@@ -984,9 +923,9 @@ def export_vendors_excel(request):
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     response["Content-Disposition"] = "attachment; filename=vendors.xlsx"
-
     wb.save(response)
     return response
+
 
 @login_required
 def export_rfp_excel(request):
@@ -997,18 +936,9 @@ def export_rfp_excel(request):
     ws = wb.active
     ws.title = "RFP List"
 
-    ws.append([
-        "ID",
-        "Title",
-        "Category",
-        "Last Date",
-        "Min Amount",
-        "Max Amount",
-        "Status"
-    ])
+    ws.append(["ID", "Title", "Category", "Last Date", "Min Amount", "Max Amount", "Status"])
 
     rfps = RFP.objects.select_related("category").all().order_by("id")
-
     for r in rfps:
         ws.append([
             r.id,
@@ -1024,29 +954,23 @@ def export_rfp_excel(request):
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     response["Content-Disposition"] = "attachment; filename=rfp_list.xlsx"
-
     wb.save(response)
     return response
 
+
+# ---------------- REPORTS ----------------
 @login_required
 def admin_reports(request):
     if not _admin_only(request):
         return redirect("login")
 
-    # ---------------- Vendor Report ----------------
     total_vendors = Vendor.objects.count()
     approved_vendors = Vendor.objects.filter(status=Vendor.ApprovalStatus.APPROVED).count()
     pending_vendors = Vendor.objects.filter(status=Vendor.ApprovalStatus.PENDING).count()
     rejected_vendors = Vendor.objects.filter(status=Vendor.ApprovalStatus.REJECTED).count()
 
-    # Category-wise vendor count
-    vendor_category_stats = (
-        Category.objects
-        .annotate(total=models.Count("vendors"))
-        .values("name", "total")
-    )
+    vendor_category_stats = Category.objects.annotate(total=Count("vendors")).values("name", "total")
 
-    # ---------------- RFP Report ----------------
     total_rfp = RFP.objects.count()
     open_rfp = RFP.objects.filter(status=RFP.Status.OPEN).count()
     closed_rfp = RFP.objects.filter(status=RFP.Status.CLOSED).count()
@@ -1056,11 +980,7 @@ def admin_reports(request):
         last_date__lt=timezone.now().date()
     ).count()
 
-    rfp_category_stats = (
-        Category.objects
-        .annotate(total=models.Count("rfps"))
-        .values("name", "total")
-    )
+    rfp_category_stats = Category.objects.annotate(total=Count("rfps")).values("name", "total")
 
     context = {
         "total_vendors": total_vendors,
@@ -1068,7 +988,6 @@ def admin_reports(request):
         "pending_vendors": pending_vendors,
         "rejected_vendors": rejected_vendors,
         "vendor_category_stats": vendor_category_stats,
-
         "total_rfp": total_rfp,
         "open_rfp": open_rfp,
         "closed_rfp": closed_rfp,
