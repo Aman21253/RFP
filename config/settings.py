@@ -18,13 +18,10 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # --- Static ---
-STATICFILES_DIRS = []
-# or only add if folder exists
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-if os.path.isdir(STATIC_DIR):
-    STATICFILES_DIRS = [STATIC_DIR]
-else:
-    STATICFILES_DIRS = []
+STATIC_URL = "/static/"
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 # --- Secret key (Render env recommended) ---
 # Put SECRET_KEY in Render Environment Variables
@@ -75,9 +72,9 @@ WSGI_APPLICATION = "config.wsgi.application"
 # --- Database (Render Postgres) ---
 DATABASES = {
     "default": dj_database_url.config(
-        default=os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR/'db.sqlite3'}"),
+        default=os.environ.get("DATABASE_URL"),
         conn_max_age=600,
-        ssl_require=not DEBUG,
+        ssl_require=True,
     )
 }
 
