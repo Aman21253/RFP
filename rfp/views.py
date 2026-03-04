@@ -5,19 +5,50 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib import messages
+from django.core.mail import send_mail
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Q, Count
+from django.db.models import Q
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 import random
+from django.db import models
 from django.utils import timezone
 from datetime import timedelta
-from .models import Vendor, Category, RFP, Quote, QuoteItem
+from .models import Vendor, Category, RFP, Quote, QuoteItem, AuthConfig, LoginOTP
 
 
-# LOGIN 
+# ---------------- AUTH CONFIG HELPER ----------------
+def get_auth_config():
+    cfg, _ = AuthConfig.objects.get_or_create(
+        id=1,
+        defaults={
+            "enable_vendor_2fa": True,
+            "otp_expiry_minutes": 10,
+        }
+    )
+    return cfg
+
+
+def _send_email_safe(subject: str, message: str, to_email: str):
+    """
+    Central safe email sender (prevents 500 + worker timeout).
+    Raises exception to caller if fails.
+    """
+    if not settings.DEFAULT_FROM_EMAIL:
+        raise Exception("DEFAULT_FROM_EMAIL is not set")
+
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[to_email],
+        fail_silently=False,
+    )
+
+
+# ---------------- LOGIN ----------------
 def login_view(request):
     if request.user.is_authenticated:
         if request.user.is_staff or request.user.is_superuser:
@@ -32,7 +63,7 @@ def login_view(request):
         if not user:
             return render(request, "rfp/login.html", {"error": "Invalid credentials"})
 
-        # Admin login directly
+        # Admin login directly (no OTP)
         if user.is_staff or user.is_superuser:
             login(request, user)
             return redirect("admin_dashboard")
@@ -46,22 +77,115 @@ def login_view(request):
         if vendor.status != Vendor.ApprovalStatus.APPROVED:
             return render(request, "rfp/login.html", {"error": "Your account is not approved yet."})
 
-        # Login vendor directly (no 2FA)
-        login(request, user)
-        return redirect("vendor_dashboard")
+        # Check backend config
+        cfg = get_auth_config()
+        if not cfg.enable_vendor_2fa:
+            login(request, user)
+            return redirect("vendor_dashboard")
+
+        # Invalidate previous OTPs
+        LoginOTP.objects.filter(email=email, is_used=False).update(is_used=True)
+
+        # Create OTP
+        otp = LoginOTP.generate_otp()
+        expires_at = timezone.now() + timedelta(minutes=int(cfg.otp_expiry_minutes or 10))
+
+        LoginOTP.objects.create(
+            email=email,
+            otp=otp,
+            expires_at=expires_at
+        )
+
+        # Store pending login
+        request.session["pending_2fa_email"] = email
+        request.session["pending_2fa_user_id"] = user.id
+
+        # Send OTP safely
+        try:
+            _send_email_safe(
+                subject="Your Login OTP",
+                message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
+                to_email=email,
+            )
+        except Exception as e:
+            request.session.pop("pending_2fa_email", None)
+            request.session.pop("pending_2fa_user_id", None)
+            return render(request, "rfp/login.html", {"error": f"OTP email failed: {e}"})
+
+        return redirect("vendor_verify_otp")
 
     return render(request, "rfp/login.html")
 
 
-# 2FA REMOVED - These endpoints are no longer used
+# ---------------- VERIFY OTP ----------------
 @require_http_methods(["GET", "POST"])
 def vendor_verify_otp(request):
-    return redirect("login")
+    email = request.session.get("pending_2fa_email")
+    user_id = request.session.get("pending_2fa_user_id")
+
+    if not email or not user_id:
+        return redirect("login")
+
+    if request.method == "POST":
+        otp_entered = (request.POST.get("otp") or "").strip()
+
+        otp_obj = (
+            LoginOTP.objects
+            .filter(email=email, otp=otp_entered, is_used=False)
+            .order_by("-created_at")
+            .first()
+        )
+
+        if not otp_obj:
+            return render(request, "rfp/vendor_verify_otp.html", {"error": "Invalid OTP."})
+
+        if timezone.now() > otp_obj.expires_at:
+            return render(request, "rfp/vendor_verify_otp.html", {"error": "OTP expired. Please resend OTP."})
+
+        otp_obj.is_used = True
+        otp_obj.save(update_fields=["is_used"])
+
+        user = User.objects.filter(id=user_id).first()
+        if not user:
+            return redirect("login")
+
+        login(request, user)
+
+        request.session.pop("pending_2fa_email", None)
+        request.session.pop("pending_2fa_user_id", None)
+
+        return redirect("vendor_dashboard")
+
+    return render(request, "rfp/vendor_verify_otp.html")
 
 
+# ---------------- RESEND OTP ----------------
 @require_POST
 def vendor_resend_otp(request):
-    return redirect("login")
+    email = request.session.get("pending_2fa_email")
+    user_id = request.session.get("pending_2fa_user_id")
+
+    if not email or not user_id:
+        return redirect("login")
+
+    cfg = get_auth_config()
+
+    LoginOTP.objects.filter(email=email, is_used=False).update(is_used=True)
+
+    otp = LoginOTP.generate_otp()
+    expires_at = timezone.now() + timedelta(minutes=int(cfg.otp_expiry_minutes or 10))
+    LoginOTP.objects.create(email=email, otp=otp, expires_at=expires_at)
+
+    try:
+        _send_email_safe(
+            subject="Your Login OTP (Resent)",
+            message=f"Your OTP is: {otp}. It will expire in {cfg.otp_expiry_minutes} minutes.",
+            to_email=email,
+        )
+    except Exception as e:
+        return render(request, "rfp/vendor_verify_otp.html", {"error": f"OTP resend failed: {e}"})
+
+    return redirect("vendor_verify_otp")
 
 
 # ---------------- LOGOUT ----------------
@@ -187,37 +311,92 @@ def vendor_signup(request):
 def forgot_password(request):
     message = None
     error = None
+    otp_sent = request.session.get("otp_sent", False)
+    email = request.session.get("reset_email", "")
 
     if request.method == "POST":
-        email = (request.POST.get("email") or "").strip().lower()
-        password = request.POST.get("password") or ""
-        confirm_password = request.POST.get("confirm_password") or ""
+        action = request.POST.get("action")
 
-        # Check if user exists
-        user = User.objects.filter(email=email).first()
-        if not user:
-            error = "Email not registered."
-        elif password != confirm_password:
-            error = "Passwords do not match."
-        else:
-            # Reset password directly (no OTP verification needed)
-            user.set_password(password)
-            user.save()
-            message = "Password reset successful. Please login."
-            return render(request, "rfp/forgot_password.html", {
-                "message": message,
-                "error": None
-            })
+        if action == "send_otp":
+            email = (request.POST.get("email") or "").strip().lower()
+
+            if not User.objects.filter(email=email).exists():
+                error = "Email not registered."
+            else:
+                otp = str(random.randint(100000, 999999))
+                request.session["reset_email"] = email
+                request.session["reset_otp"] = otp
+                request.session["otp_sent"] = True
+
+                try:
+                    _send_email_safe(
+                        subject="Your OTP for Password Reset",
+                        message=f"Your OTP is: {otp}",
+                        to_email=email,
+                    )
+                except Exception as e:
+                    # rollback session flags
+                    request.session.pop("reset_otp", None)
+                    request.session["otp_sent"] = False
+                    error = f"OTP email failed: {e}"
+                    return render(request, "rfp/forgot_password.html", {
+                        "message": None,
+                        "error": error,
+                        "otp_sent": False,
+                        "email": email
+                    })
+
+                message = "OTP sent to your registered email."
+                otp_sent = True
+
+        elif action == "verify_otp":
+            email = (request.POST.get("email") or "").strip().lower()
+            otp_entered = (request.POST.get("otp") or "").strip()
+            otp_saved = request.session.get("reset_otp")
+
+            if otp_saved and otp_entered == otp_saved:
+                request.session["otp_verified"] = True
+                return redirect("reset_password")
+            else:
+                error = "Invalid OTP. Please try again."
+                otp_sent = True
 
     return render(request, "rfp/forgot_password.html", {
         "message": message,
-        "error": error
+        "error": error,
+        "otp_sent": otp_sent,
+        "email": email
     })
 
 
 def reset_password(request):
-    # 2FA removed - redirect to login
-    return redirect("login")
+    if not request.session.get("otp_verified"):
+        return redirect("forgot_password")
+
+    email = request.session.get("reset_email")
+    error = None
+
+    if request.method == "POST":
+        password = request.POST.get("password")
+        confirm_password = request.POST.get("confirm_password")
+
+        if password != confirm_password:
+            error = "Passwords do not match."
+        else:
+            user = User.objects.filter(email=email).first()
+            if not user:
+                error = "User not found."
+            else:
+                user.set_password(password)
+                user.save()
+
+                for k in ["reset_email", "reset_otp", "otp_sent", "otp_verified"]:
+                    request.session.pop(k, None)
+
+                messages.success(request, "Password reset successful. Please login.")
+                return redirect("login")
+
+    return render(request, "rfp/reset_password.html", {"error": error})
 
 
 # ---------------- ADMIN HELPERS ----------------
