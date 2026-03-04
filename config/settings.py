@@ -82,20 +82,19 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 # SendGrid Email Configuration
-if os.environ.get("SENDGRID_API_KEY"):
-    # Using SendGrid API
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
+
+if SENDGRID_API_KEY:
+    # Use SendGrid API Backend
     EMAIL_BACKEND = "sendgrid_backend.SendgridBackend"
-    SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
 else:
-    # Fallback to SMTP (SendGrid SMTP or other providers)
+    # Fallback to SMTP (SendGrid SMTP)
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-    EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.sendgrid.net")
-    EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
-    EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "apikey")
-    EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-    EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() in ("true", "1", "yes")
-    EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "False").lower() in ("true", "1", "yes")
-    EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "10"))
+    EMAIL_HOST = "smtp.sendgrid.net"
+    EMAIL_PORT = 587
+    EMAIL_HOST_USER = "apikey"
+    EMAIL_HOST_PASSWORD = os.environ.get("SENDGRID_SMTP_PASSWORD", "")
+    EMAIL_USE_TLS = True
 
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@example.com")
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
