@@ -116,4 +116,10 @@ EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "10"))
 
 # This must match a VERIFIED Single Sender email in SendGrid
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "amanbansalsks@gmail.com")
+
+print("EMAIL_BACKEND =", EMAIL_BACKEND)
+print("DEFAULT_FROM_EMAIL =", DEFAULT_FROM_EMAIL)
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+print("SENDGRID_API_KEY_SET =", bool(SENDGRID_API_KEY))
+
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
